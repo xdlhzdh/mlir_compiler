@@ -11,13 +11,13 @@
 namespace Interpreter_V4 {
 
 // ===== Type System =====
-enum class ValueType { NONE, INT, DOUBLE, STRING, BOOL, FUNCTION, CLOSURE };
+enum class ValueType { NONE, INT, DOUBLE, STRING, BOOL, FUNCTION };
 
-struct Value;
+// ===== Forward declarations =====
 struct Env;
-class Stmt; // Forward declaration
+class Stmt;
 
-// Function/Closure type
+// ===== Function/Closure type =====
 struct Function {
   std::vector<std::string> params;
   std::shared_ptr<Stmt> body;
@@ -89,7 +89,7 @@ struct Value {
 };
 
 // ===== Environment with scope chain =====
-struct Env : public std::enable_shared_from_this<Env> {
+struct Env {
   std::unordered_map<std::string, Value> vars;
   std::shared_ptr<Env> parent;
 
@@ -359,10 +359,6 @@ public:
   }
 };
 
-// ===== AST Forward declarations =====
-class Expr;
-class Stmt;
-
 // ===== Expression AST =====
 class Expr {
 public:
@@ -521,7 +517,6 @@ public:
     case ValueType::BOOL:
       return Value("bool");
     case ValueType::FUNCTION:
-    case ValueType::CLOSURE:
       return Value("function");
     default:
       return Value("none");

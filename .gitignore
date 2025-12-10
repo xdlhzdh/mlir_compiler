@@ -1,3 +1,6 @@
 /.history/
 /build/*
 /Testing/
+/antlr/build/
+/antlr/.antlr/
+/antlr/antlr-*-complete.jar
