@@ -392,14 +392,29 @@ public:
     if (op == "+") {
       if (lval.type == ValueType::STRING || rval.type == ValueType::STRING)
         return Value(lval.toString() + rval.toString());
+      // Keep as INT if both operands are INT
+      if (lval.type == ValueType::INT && rval.type == ValueType::INT)
+        return Value(lval.toInt() + rval.toInt());
       return Value(lval.toNumber() + rval.toNumber());
     }
-    if (op == "-")
+    if (op == "-") {
+      // Keep as INT if both operands are INT
+      if (lval.type == ValueType::INT && rval.type == ValueType::INT)
+        return Value(lval.toInt() - rval.toInt());
       return Value(lval.toNumber() - rval.toNumber());
-    if (op == "*")
+    }
+    if (op == "*") {
+      // Keep as INT if both operands are INT
+      if (lval.type == ValueType::INT && rval.type == ValueType::INT)
+        return Value(lval.toInt() * rval.toInt());
       return Value(lval.toNumber() * rval.toNumber());
-    if (op == "/")
+    }
+    if (op == "/") {
+      // Keep as INT if both operands are INT
+      if (lval.type == ValueType::INT && rval.type == ValueType::INT)
+        return Value(lval.toInt() / rval.toInt());
       return Value(lval.toNumber() / rval.toNumber());
+    }
     if (op == "%")
       return Value(lval.toInt() % rval.toInt());
 
@@ -443,8 +458,12 @@ public:
 
   Value eval(std::shared_ptr<Env> env) override {
     Value val = operand->eval(env);
-    if (op == "-")
+    if (op == "-") {
+      // Keep as INT if operand is INT
+      if (val.type == ValueType::INT)
+        return Value(-val.toInt());
       return Value(-val.toNumber());
+    }
     if (op == "!")
       return Value(!val.toBool());
     throw std::runtime_error("Unknown unary operator: " + op);
@@ -584,14 +603,26 @@ public:
         if (oldVal.type == ValueType::STRING ||
             newVal.type == ValueType::STRING)
           env->set(name, Value(oldVal.toString() + newVal.toString()));
+        else if (oldVal.type == ValueType::INT && newVal.type == ValueType::INT)
+          env->set(name, Value(oldVal.toInt() + newVal.toInt()));
         else
           env->set(name, Value(oldVal.toNumber() + newVal.toNumber()));
-      } else if (op == "-=")
-        env->set(name, Value(oldVal.toNumber() - newVal.toNumber()));
-      else if (op == "*=")
-        env->set(name, Value(oldVal.toNumber() * newVal.toNumber()));
-      else if (op == "/=")
-        env->set(name, Value(oldVal.toNumber() / newVal.toNumber()));
+      } else if (op == "-=") {
+        if (oldVal.type == ValueType::INT && newVal.type == ValueType::INT)
+          env->set(name, Value(oldVal.toInt() - newVal.toInt()));
+        else
+          env->set(name, Value(oldVal.toNumber() - newVal.toNumber()));
+      } else if (op == "*=") {
+        if (oldVal.type == ValueType::INT && newVal.type == ValueType::INT)
+          env->set(name, Value(oldVal.toInt() * newVal.toInt()));
+        else
+          env->set(name, Value(oldVal.toNumber() * newVal.toNumber()));
+      } else if (op == "/=") {
+        if (oldVal.type == ValueType::INT && newVal.type == ValueType::INT)
+          env->set(name, Value(oldVal.toInt() / newVal.toInt()));
+        else
+          env->set(name, Value(oldVal.toNumber() / newVal.toNumber()));
+      }
     }
   }
 };

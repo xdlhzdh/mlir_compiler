@@ -15,8 +15,10 @@ add_executable(demo_interpreter_v3 src/demo_interpreter_v3.cpp)
 add_executable(demo_interpreter_v4 src/demo_interpreter_v4.cpp)
 
 add_subdirectory(antlr)
-add_executable(demo_antlr_interpreter src/demo_antlr_interpreter.cpp)
-target_link_libraries(demo_antlr_interpreter lang_parser)
+add_executable(demo_interpreter_antlr src/demo_interpreter_antlr.cpp)
+target_link_libraries(demo_interpreter_antlr lang_parser)
+
+add_executable(demo_nfa_dfa src/demo_nfa_dfa.cpp)
 
 # Find LLVM related compilation options and libraries
 find_program(LLVM_CONFIG llvm-config)
@@ -85,14 +87,17 @@ add_custom_target(
   COMMAND ${CMAKE_CURRENT_BINARY_DIR}/demo_interpreter_v4
   COMMAND echo ""
   COMMAND echo "========== Running Demo ANTLR Interpreter =========="
-  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/demo_antlr_interpreter
+  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/demo_interpreter_antlr
   COMMAND echo ""
   COMMAND echo "========== Running Demo Simple LLVM IR =========="
   COMMAND ${CMAKE_CURRENT_BINARY_DIR}/demo_simple_llvm_ir
   COMMAND echo ""
   COMMAND echo "========== Running Demo Simple LLVM JIT =========="
   COMMAND ${CMAKE_CURRENT_BINARY_DIR}/demo_simple_llvm_ir_jit
-  DEPENDS demo_interpreter_v1 demo_interpreter_v2 demo_interpreter_v3 demo_interpreter_v4 demo_antlr_interpreter demo_simple_llvm_ir demo_simple_llvm_ir_jit
+  COMMAND echo ""
+  COMMAND echo "========== Running Demo NFA DFA =========="
+  COMMAND ${CMAKE_CURRENT_BINARY_DIR}/demo_nfa_dfa
+  DEPENDS demo_interpreter_v1 demo_interpreter_v2 demo_interpreter_v3 demo_interpreter_v4 demo_interpreter_antlr demo_simple_llvm_ir demo_simple_llvm_ir_jit demo_nfa_dfa
   COMMENT "Running all demos")
 
 # Google Test - using system installed version

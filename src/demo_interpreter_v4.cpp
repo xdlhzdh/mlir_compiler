@@ -23,7 +23,17 @@ void runExample(const std::string &title, const std::string &code) {
 int main() {
   std::cout << "===== Compiler V4 Demo: Break and Continue Support =====\n";
 
-  // 1. Basic Break Statement
+  // 1. Left-associative subtraction: a - b - c = (a - b) - c
+  runExample("Left-associative Subtraction", R"(
+let a = 10;
+let b = 3;
+let c = 2;
+let result = a - b - c;
+print "a - b - c =", result;
+print "Expected: (10 - 3) - 2 = 7 - 2 = 5";
+)");
+
+  // 2. Basic Break Statement
   runExample("Basic Break - Exit Loop Early", R"(
 let i = 0;
 while (i < 10) {
@@ -37,7 +47,7 @@ while (i < 10) {
 print "Loop ended";
 )");
 
-  // 2. Basic Continue Statement
+  // 3. Basic Continue Statement
   runExample("Basic Continue - Skip Even Numbers", R"(
 let i = 0;
 while (i < 10) {
@@ -50,7 +60,7 @@ while (i < 10) {
 print "Loop completed";
 )");
 
-  // 3. Break in Nested Loops
+  // 4. Break in Nested Loops
   runExample("Break in Nested Loops", R"(
 let i = 0;
 while (i < 3) {
@@ -69,7 +79,7 @@ while (i < 3) {
 print "All loops ended";
 )");
 
-  // 4. Continue in Nested Loops
+  // 5. Continue in Nested Loops
   runExample("Continue in Nested Loops", R"(
 let i = 0;
 while (i < 3) {
@@ -90,7 +100,7 @@ while (i < 3) {
 }
 )");
 
-  // 5. Break with Condition - Find First Match
+  // 6. Break with Condition - Find First Match
   runExample("Break - Find First Even Square", R"(
 let i = 1;
 let found = 0;
@@ -110,7 +120,7 @@ if (found > 0) {
 }
 )");
 
-  // 6. Continue with Complex Condition
+  // 7. Continue with Complex Condition
   runExample("Continue - Filter and Process", R"(
 let i = 1;
 let sum = 0;
@@ -127,7 +137,7 @@ while (i <= 10) {
 print "Final sum:", sum;
 )");
 
-  // 7. Break and Continue Together
+  // 8. Break and Continue Together
   runExample("Break and Continue Together", R"(
 let count = 0;
 let i = 0;
@@ -149,7 +159,7 @@ while (i < 20) {
 print "Processed", count, "items";
 )");
 
-  // 8. Break in Function with Loop
+  // 9. Break in Function with Loop
   runExample("Break in Function", R"(
 fn findDivisor(n) {
     let i = 2;
@@ -167,7 +177,7 @@ print "First divisor of 17:", findDivisor(17);
 print "First divisor of 20:", findDivisor(20);
 )");
 
-  // 9. Continue with Early Increment
+  // 10. Continue with Early Increment
   runExample("Continue - Print Only Primes (Simplified)", R"(
 fn isPrime(n) {
     if (n < 2) return false;
@@ -197,7 +207,7 @@ while (num < 30) {
 print "Found", count, "primes";
 )");
 
-  // 10. Complex Example - Search with Break and Continue
+  // 11. Complex Example - Search with Break and Continue
   runExample("Complex - Search and Filter", R"(
 fn processNumbers() {
     let i = 1;
@@ -229,7 +239,7 @@ let total = processNumbers();
 print "Total results:", total;
 )");
 
-  // 11. Break with Closure
+  // 12. Break with Closure
   runExample("Break with Closure - Search in Closure", R"(
 fn makeSearcher(max) {
     fn search(target) {
@@ -254,7 +264,7 @@ print "Square root of 49:", searcher(49);
 print "Square root of 30:", searcher(30);
 )");
 
-  // 12. Ternary with Break/Continue Context
+  // 13. Ternary with Break/Continue Context
   runExample("Ternary Operator with Loop Control", R"(
 let i = 0;
 let evens = 0;

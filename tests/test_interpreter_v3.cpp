@@ -174,7 +174,7 @@ TEST(V3_ExprTest, UnaryNegation) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "-10.000000\n");
+  EXPECT_EQ(cap.get(), "-10\n");
 }
 
 TEST(V3_ExprTest, LogicalNot) {
@@ -197,7 +197,7 @@ TEST(V3_AssignTest, PlusAssign) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "15.000000\n");
+  EXPECT_EQ(cap.get(), "15\n");
 }
 
 TEST(V3_AssignTest, MinusAssign) {
@@ -208,7 +208,7 @@ TEST(V3_AssignTest, MinusAssign) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "12.000000\n");
+  EXPECT_EQ(cap.get(), "12\n");
 }
 
 TEST(V3_AssignTest, MulAssign) {
@@ -219,7 +219,7 @@ TEST(V3_AssignTest, MulAssign) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "12.000000\n");
+  EXPECT_EQ(cap.get(), "12\n");
 }
 
 TEST(V3_AssignTest, DivAssign) {
@@ -230,7 +230,7 @@ TEST(V3_AssignTest, DivAssign) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "25.000000\n");
+  EXPECT_EQ(cap.get(), "25\n");
 }
 
 TEST(V3_AssignTest, StringPlusAssign) {
@@ -320,7 +320,7 @@ TEST(V3_ClosureTest, SimpleClosure) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "1.000000\n2.000000\n3.000000\n");
+  EXPECT_EQ(cap.get(), "1\n2\n3\n");
 }
 
 TEST(V3_ClosureTest, MultipleClosures) {
@@ -342,7 +342,7 @@ TEST(V3_ClosureTest, MultipleClosures) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "8.000000\n13.000000\n");
+  EXPECT_EQ(cap.get(), "8\n13\n");
 }
 
 TEST(V3_ClosureTest, ClosureWithLoop) {
@@ -367,8 +367,7 @@ TEST(V3_ClosureTest, ClosureWithLoop) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(),
-            "2.000000 3.000000\n4.000000 6.000000\n6.000000 9.000000\n");
+  EXPECT_EQ(cap.get(), "2 3\n4 6\n6 9\n");
 }
 
 // ===== Function Tests =====
@@ -408,7 +407,7 @@ TEST(V3_FunctionTest, HigherOrderFunction) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "25.000000\n");
+  EXPECT_EQ(cap.get(), "25\n");
 }
 
 // ===== Integration Tests =====
@@ -425,7 +424,7 @@ TEST(V3_IntegrationTest, ComplexExpression) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "50.000000\n");
+  EXPECT_EQ(cap.get(), "50\n");
 }
 
 TEST(V3_IntegrationTest, FactorialWithClosure) {
@@ -442,7 +441,7 @@ TEST(V3_IntegrationTest, FactorialWithClosure) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "120.000000\n");
+  EXPECT_EQ(cap.get(), "120\n");
 }
 
 TEST(V3_IntegrationTest, FibonacciWithMemoization) {
@@ -460,7 +459,7 @@ TEST(V3_IntegrationTest, FibonacciWithMemoization) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "55.000000\n");
+  EXPECT_EQ(cap.get(), "55\n");
 }
 
 TEST(V3_IntegrationTest, TypeCoercion) {
@@ -513,7 +512,7 @@ TEST(V3_IntegrationTest, ComplexControlFlow) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "6.000000\n");
+  EXPECT_EQ(cap.get(), "6\n");
 }
 
 TEST(V3_IntegrationTest, NestedFunctionCalls) {
@@ -532,7 +531,7 @@ TEST(V3_IntegrationTest, NestedFunctionCalls) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "45.000000\n");
+  EXPECT_EQ(cap.get(), "45\n");
 }
 
 // ===== String Comparison Tests =====
@@ -628,5 +627,5 @@ TEST(V3_StringComparisonTest, MultipleStringComparisons) {
   CaptureStdout cap;
   for (auto &stmt : stmts)
     stmt->exec(env);
-  EXPECT_EQ(cap.get(), "10\n20.000000\n100.000000\n");
+  EXPECT_EQ(cap.get(), "10\n20\n100\n");
 }
