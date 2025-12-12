@@ -370,6 +370,37 @@ TEST(V3_ClosureTest, ClosureWithLoop) {
   EXPECT_EQ(cap.get(), "2 3\n4 6\n6 9\n");
 }
 
+TEST(V3_ClosureTest, AnonymousClosureExpr) {
+  CaptureStdout cap;
+  auto env = std::make_shared<Env>();
+  Parser p(R"(
+    let add = fn(x, y) { return x + y; };
+    print add(2, 3);
+    let mul = fn(a, b) { return a * b; };
+    print mul(4, 5);
+  )");
+  auto stmts = p.parseProgram();
+  for (auto &stmt : stmts)
+    stmt->exec(env);
+  EXPECT_EQ(cap.get(), "5\n20\n");
+}
+
+TEST(V3_ClosureTest, AnonymousClosureAsArgument) {
+  CaptureStdout cap;
+  auto env = std::make_shared<Env>();
+  Parser p(R"(
+    fn apply(f, x, y) { return f(x, y); }
+    let sum = fn(a, b) { return a + b; };
+    let prod = fn(a, b) { return a * b; };
+    print apply(sum, 10, 20);
+    print apply(prod, 3, 7);
+  )");
+  auto stmts = p.parseProgram();
+  for (auto &stmt : stmts)
+    stmt->exec(env);
+  EXPECT_EQ(cap.get(), "30\n21\n");
+}
+
 // ===== Function Tests =====
 TEST(V3_FunctionTest, ReturnFunction) {
   auto env = std::make_shared<Env>();

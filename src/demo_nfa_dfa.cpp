@@ -44,7 +44,7 @@ std::set<NFA_State> NFA_Transition(const std::set<NFA_State> &current_states,
 void run_nfa(const std::string &input) {
   std::set<NFA_State> current_states = {Q0}; // 初始状态集合
 
-  std::cout << "--- NFA 运行轨迹: " << input << " ---" << std::endl;
+  std::cout << "\n--- NFA 运行轨迹: " << input << " ---" << std::endl;
   for (char c : input) {
     current_states = NFA_Transition(current_states, c);
 

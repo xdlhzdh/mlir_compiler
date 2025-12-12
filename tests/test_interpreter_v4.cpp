@@ -589,6 +589,47 @@ TEST(V4_IntegrationTest, ContinueWithStringComparison) {
   EXPECT_EQ(output.find("low"), std::string::npos);
 }
 
+// ===== ClosureExpr (Anonymous Function) Tests =====
+TEST(V4_ClosureExprTest, AnonymousFunctionAssignment) {
+  CaptureStdout capture;
+  std::string code = R"(
+    let add = fn(x, y) { return x + y; };
+    print add(2, 3);
+    print add(10, 20);
+  )";
+  auto env = std::make_shared<Env>();
+  Parser p(code);
+  auto stmts = p.parseProgram();
+  for (auto &stmt : stmts)
+    stmt->exec(env);
+  std::string output = capture.get();
+  EXPECT_NE(output.find("5"), std::string::npos);
+  EXPECT_NE(output.find("30"), std::string::npos);
+}
+
+TEST(V4_ClosureExprTest, AnonymousClosureAsArgument) {
+  CaptureStdout capture;
+  std::string code = R"(
+    fn apply(f, x, y) { return f(x, y); }
+    let sum = fn(a, b) { return a + b; };
+    print apply(sum, 5, 7);
+  )";
+  auto env = std::make_shared<Env>();
+  Parser p(code);
+  auto stmts = p.parseProgram();
+  for (auto &stmt : stmts)
+    stmt->exec(env);
+  std::string output = capture.get();
+  EXPECT_NE(output.find("12"), std::string::npos);
+}
+
+TEST(V4_ClosureExprTest, ParseAnonymousFunctionInExpression) {
+  std::string code = "let f = fn(x) { return x; };";
+  Parser p(code);
+  auto stmts = p.parseProgram();
+  EXPECT_EQ(stmts.size(), 1);
+}
+
 // ===== Parser Tests =====
 TEST(V4_ParserTest, ParseBreakStatement) {
   std::string code = "break;";

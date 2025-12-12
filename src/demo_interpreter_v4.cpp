@@ -239,6 +239,14 @@ let total = processNumbers();
 print "Total results:", total;
 )");
 
+  // 11b. Anonymous function (ClosureExpr): fn ( params ) { body }
+  runExample("Anonymous Function (ClosureExpr)", R"(
+let add = fn(x, y) { return x + y; };
+print "add(1, 2) =", add(1, 2);
+let mul = fn(a, b) { return a * b; };
+print "mul(3, 4) =", mul(3, 4);
+)");
+
   // 12. Break with Closure
   runExample("Break with Closure - Search in Closure", R"(
 fn makeSearcher(max) {

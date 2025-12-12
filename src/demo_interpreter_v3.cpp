@@ -109,6 +109,16 @@ print "Counter1:", counter1(), counter1(), counter1();
 print "Counter2:", counter2(), counter2();
 )");
 
+  // 6b. Anonymous function (ClosureExpr): fn ( params ) { body }
+  runExample("Anonymous Function (ClosureExpr)", R"(
+let add = fn(x, y) { return x + y; };
+print "add(1, 2) =", add(1, 2);
+let mul = fn(a, b) { return a * b; };
+print "mul(3, 4) =", mul(3, 4);
+let greet = fn(name) { return "Hello, " + name; };
+print greet("World");
+)");
+
   // 7. Higher-Order Functions
   runExample("Higher-Order Functions", R"(
 fn apply(f, x) {

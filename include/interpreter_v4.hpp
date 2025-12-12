@@ -503,12 +503,12 @@ public:
   Value eval(std::shared_ptr<Env> env) override;
 };
 
-class FunctionExpr : public Expr {
+class ClosureExpr : public Expr {
   std::vector<std::string> params;
   std::shared_ptr<Stmt> body; // Changed to shared_ptr
 
 public:
-  FunctionExpr(std::vector<std::string> p, std::unique_ptr<Stmt> b)
+  ClosureExpr(std::vector<std::string> p, std::unique_ptr<Stmt> b)
       : params(std::move(p)), body(std::move(b)) {}
 
   Value eval(std::shared_ptr<Env> env) override {
@@ -939,6 +939,30 @@ public:
       auto expr = parseExpression();
       expect(TOK_RP, "Expected ')' after expression");
       return expr;
+    }
+
+    // Anonymous function expression: fn ( params ) { body }
+    if (curTok.type == TOK_FN) {
+      advance(); // consume 'fn'
+      expect(TOK_LP, "Expected '(' after 'fn'");
+      std::vector<std::string> params;
+      if (curTok.type != TOK_RP) {
+        if (curTok.type != TOK_ID)
+          throw std::runtime_error("Expected parameter name");
+        params.push_back(curTok.text);
+        advance();
+        while (match(TOK_COMMA)) {
+          if (curTok.type != TOK_ID)
+            throw std::runtime_error("Expected parameter name");
+          params.push_back(curTok.text);
+          advance();
+        }
+      }
+      if (curTok.type != TOK_RP)
+        throw std::runtime_error("Expected ')' after parameters");
+      advance();
+      auto body = parseBlock();
+      return std::make_unique<ClosureExpr>(params, std::move(body));
     }
 
     throw std::runtime_error("Unexpected token in expression: " + curTok.text);

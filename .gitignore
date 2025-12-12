@@ -4,3 +4,4 @@
 /antlr/build/
 /antlr/.antlr/
 /antlr/antlr-*-complete.jar
+output/
