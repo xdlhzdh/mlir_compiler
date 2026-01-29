@@ -67,11 +67,18 @@ if(LLVM_CONFIG)
   # Set linking options (JIT needs more libraries)
   target_link_libraries(demo_simple_llvm_ir_jit ${LLVM_LDFLAGS}
     ${LLVM_LIBS_JIT})
+
+  # Demo: interpreter_v4 AST -> LLVM IR (needs -fexceptions to override LLVM -fno-exceptions)
+  add_executable(demo_interpreter_v4_llvm src/demo_interpreter_v4_llvm.cpp)
+  set_target_properties(demo_interpreter_v4_llvm PROPERTIES COMPILE_FLAGS
+    "${LLVM_CXXFLAGS} -DUSE_LLVM_CODEGEN -fexceptions")
+  target_link_libraries(demo_interpreter_v4_llvm ${LLVM_LDFLAGS}
+    ${LLVM_LIBS_CORE})
 else()
   message(WARNING "llvm-config not found. LLVM demo targets will not be built.")
 endif()
 
-# Create custom demo target
+# Create custom demo targetUSE_LLVM_CODEGEN
 add_custom_target(
   demo
   COMMAND echo "========== Running Demo Interpreter V1 =========="

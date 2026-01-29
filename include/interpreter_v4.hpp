@@ -8,6 +8,17 @@
 #include <variant>
 #include <vector>
 
+#ifdef USE_LLVM_CODEGEN
+#include <llvm/IR/Constant.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Type.h>
+#endif
+
 namespace Interpreter_V4 {
 
 // ===== Type System =====
@@ -125,6 +136,44 @@ struct Env {
     throw std::runtime_error("Undefined variable: " + name);
   }
 };
+
+#ifdef USE_LLVM_CODEGEN
+// ===== LLVM CodeGen Context =====
+struct CodeGenContext {
+  llvm::IRBuilder<> &builder;
+  llvm::Module *module;
+  llvm::LLVMContext &context;
+  std::vector<std::unordered_map<std::string, llvm::AllocaInst *>> namedValues;
+  llvm::Function *currentFunction = nullptr;
+  std::unordered_map<std::string, llvm::Function *> functions;
+  struct LoopLabels {
+    llvm::BasicBlock *cond = nullptr;
+    llvm::BasicBlock *exit = nullptr;
+  };
+  std::vector<LoopLabels> loopStack;
+
+  llvm::Type *doubleTy() { return llvm::Type::getDoubleTy(context); }
+  llvm::Type *i1Ty() { return llvm::Type::getInt1Ty(context); }
+  llvm::Type *i32Ty() { return llvm::Type::getInt32Ty(context); }
+  llvm::Type *i8PtrTy() {
+    return llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0);
+  }
+
+  void pushScope() { namedValues.emplace_back(); }
+  void popScope() { namedValues.pop_back(); }
+  llvm::AllocaInst *findAlloca(const std::string &name) {
+    for (auto it = namedValues.rbegin(); it != namedValues.rend(); ++it) {
+      auto i = it->find(name);
+      if (i != it->end())
+        return i->second;
+    }
+    return nullptr;
+  }
+  void defineAlloca(const std::string &name, llvm::AllocaInst *alloca) {
+    namedValues.back()[name] = alloca;
+  }
+};
+#endif
 
 // ===== Lexer =====
 enum TokenType {
@@ -364,6 +413,9 @@ class Expr {
 public:
   virtual ~Expr() = default;
   virtual Value eval(std::shared_ptr<Env> env) = 0;
+#ifdef USE_LLVM_CODEGEN
+  virtual llvm::Value *codegen(CodeGenContext &ctx) { return nullptr; }
+#endif
 };
 
 class LiteralExpr : public Expr {
@@ -372,6 +424,21 @@ class LiteralExpr : public Expr {
 public:
   LiteralExpr(Value v) : value(v) {}
   Value eval(std::shared_ptr<Env>) override { return value; }
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &ctx) override {
+    switch (value.type) {
+    case ValueType::INT:
+      return llvm::ConstantFP::get(ctx.doubleTy(),
+                                   static_cast<double>(value.toInt()));
+    case ValueType::DOUBLE:
+      return llvm::ConstantFP::get(ctx.doubleTy(), value.toNumber());
+    case ValueType::BOOL:
+      return llvm::ConstantInt::get(ctx.i1Ty(), value.toBool() ? 1 : 0);
+    default:
+      return llvm::ConstantFP::get(ctx.doubleTy(), 0.0);
+    }
+  }
+#endif
 };
 
 class VarExpr : public Expr {
@@ -379,7 +446,16 @@ class VarExpr : public Expr {
 
 public:
   VarExpr(std::string n) : name(std::move(n)) {}
+  const std::string &getName() const { return name; }
   Value eval(std::shared_ptr<Env> env) override { return env->get(name); }
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &ctx) override {
+    llvm::AllocaInst *alloca = ctx.findAlloca(name);
+    if (!alloca)
+      throw std::runtime_error("Unknown variable: " + name);
+    return ctx.builder.CreateLoad(ctx.doubleTy(), alloca, name);
+  }
+#endif
 };
 
 class BinaryExpr : public Expr {
@@ -452,6 +528,69 @@ public:
 
     throw std::runtime_error("Unknown binary operator: " + op);
   }
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &ctx) override {
+    llvm::Value *L = left->codegen(ctx);
+    llvm::Value *R = right->codegen(ctx);
+    if (!L || !R)
+      return nullptr;
+    bool lIsI1 = L->getType()->isIntegerTy(1);
+    bool rIsI1 = R->getType()->isIntegerTy(1);
+    if (op == "+" || op == "-" || op == "*" || op == "/") {
+      llvm::Value *lD = lIsI1 ? ctx.builder.CreateUIToFP(L, ctx.doubleTy()) : L;
+      llvm::Value *rD = rIsI1 ? ctx.builder.CreateUIToFP(R, ctx.doubleTy()) : R;
+      if (op == "+")
+        return ctx.builder.CreateFAdd(lD, rD, "add");
+      if (op == "-")
+        return ctx.builder.CreateFSub(lD, rD, "sub");
+      if (op == "*")
+        return ctx.builder.CreateFMul(lD, rD, "mul");
+      if (op == "/")
+        return ctx.builder.CreateFDiv(lD, rD, "div");
+    }
+    if (op == "%") {
+      llvm::Value *lI = lIsI1 ? ctx.builder.CreateUIToFP(L, ctx.doubleTy()) : L;
+      llvm::Value *rI = rIsI1 ? ctx.builder.CreateUIToFP(R, ctx.doubleTy()) : R;
+      lI = ctx.builder.CreateFPToSI(lI, ctx.i32Ty());
+      rI = ctx.builder.CreateFPToSI(rI, ctx.i32Ty());
+      llvm::Value *rem = ctx.builder.CreateSRem(lI, rI, "rem");
+      return ctx.builder.CreateSIToFP(rem, ctx.doubleTy());
+    }
+    if (op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" ||
+        op == ">=") {
+      llvm::Value *lD = lIsI1 ? ctx.builder.CreateUIToFP(L, ctx.doubleTy()) : L;
+      llvm::Value *rD = rIsI1 ? ctx.builder.CreateUIToFP(R, ctx.doubleTy()) : R;
+      llvm::CmpInst::Predicate pred;
+      if (op == "==")
+        pred = llvm::CmpInst::FCMP_OEQ;
+      else if (op == "!=")
+        pred = llvm::CmpInst::FCMP_ONE;
+      else if (op == "<")
+        pred = llvm::CmpInst::FCMP_OLT;
+      else if (op == ">")
+        pred = llvm::CmpInst::FCMP_OGT;
+      else if (op == "<=")
+        pred = llvm::CmpInst::FCMP_OLE;
+      else
+        pred = llvm::CmpInst::FCMP_OGE;
+      return ctx.builder.CreateFCmp(pred, lD, rD, "cmp");
+    }
+    if (op == "&&" || op == "||") {
+      llvm::Value *lB =
+          lIsI1 ? L
+                : ctx.builder.CreateFCmpONE(
+                      L, llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+      llvm::Value *rB =
+          rIsI1 ? R
+                : ctx.builder.CreateFCmpONE(
+                      R, llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+      if (op == "&&")
+        return ctx.builder.CreateAnd(lB, rB, "and");
+      return ctx.builder.CreateOr(lB, rB, "or");
+    }
+    return nullptr;
+  }
+#endif
 };
 
 class UnaryExpr : public Expr {
@@ -474,6 +613,25 @@ public:
       return Value(!val.toBool());
     throw std::runtime_error("Unknown unary operator: " + op);
   }
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &ctx) override {
+    llvm::Value *V = operand->codegen(ctx);
+    if (!V)
+      return nullptr;
+    if (op == "-") {
+      if (V->getType()->isIntegerTy(1))
+        V = ctx.builder.CreateUIToFP(V, ctx.doubleTy());
+      return ctx.builder.CreateFNeg(V, "neg");
+    }
+    if (op == "!") {
+      if (!V->getType()->isIntegerTy(1))
+        V = ctx.builder.CreateFCmpONE(
+            V, llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+      return ctx.builder.CreateNot(V, "not");
+    }
+    return nullptr;
+  }
+#endif
 };
 
 // Ternary conditional operator: condition ? true_expr : false_expr
@@ -490,6 +648,21 @@ public:
     return condition->eval(env).toBool() ? trueExpr->eval(env)
                                          : falseExpr->eval(env);
   }
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &ctx) override {
+    llvm::Value *cond = condition->codegen(ctx);
+    if (!cond)
+      return nullptr;
+    if (!cond->getType()->isIntegerTy(1))
+      cond = ctx.builder.CreateFCmpONE(
+          cond, llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+    llvm::Value *tVal = trueExpr->codegen(ctx);
+    llvm::Value *fVal = falseExpr->codegen(ctx);
+    if (!tVal || !fVal)
+      return nullptr;
+    return ctx.builder.CreateSelect(cond, tVal, fVal, "ternary");
+  }
+#endif
 };
 
 class CallExpr : public Expr {
@@ -501,6 +674,29 @@ public:
       : callee(std::move(c)), args(std::move(a)) {}
 
   Value eval(std::shared_ptr<Env> env) override;
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &ctx) override {
+    VarExpr *varCallee = dynamic_cast<VarExpr *>(callee.get());
+    if (!varCallee)
+      throw std::runtime_error(
+          "Only named function calls supported in LLVM codegen");
+    std::string fname = varCallee->getName();
+    auto it = ctx.functions.find(fname);
+    if (it == ctx.functions.end())
+      throw std::runtime_error("Unknown function: " + fname);
+    llvm::Function *F = it->second;
+    std::vector<llvm::Value *> argVals;
+    for (const auto &arg : args) {
+      llvm::Value *a = arg->codegen(ctx);
+      if (!a)
+        return nullptr;
+      if (a->getType()->isIntegerTy(1))
+        a = ctx.builder.CreateUIToFP(a, ctx.doubleTy());
+      argVals.push_back(a);
+    }
+    return ctx.builder.CreateCall(F, argVals, "call");
+  }
+#endif
 };
 
 class ClosureExpr : public Expr {
@@ -516,6 +712,13 @@ public:
     auto func = std::make_shared<Function>(params, body, env);
     return Value(func);
   }
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &) override {
+    throw std::runtime_error(
+        "Anonymous function (closure) not supported in LLVM codegen");
+    return nullptr;
+  }
+#endif
 };
 
 class TypeofExpr : public Expr {
@@ -541,6 +744,9 @@ public:
       return Value("none");
     }
   }
+#ifdef USE_LLVM_CODEGEN
+  llvm::Value *codegen(CodeGenContext &) override { return nullptr; }
+#endif
 };
 
 // ===== Control Flow Exceptions =====
@@ -558,6 +764,9 @@ class Stmt {
 public:
   virtual ~Stmt() = default;
   virtual void exec(std::shared_ptr<Env> env) = 0;
+#ifdef USE_LLVM_CODEGEN
+  virtual void codegen(CodeGenContext &ctx) {}
+#endif
 };
 
 class ExprStmt : public Stmt {
@@ -566,6 +775,12 @@ class ExprStmt : public Stmt {
 public:
   ExprStmt(std::unique_ptr<Expr> e) : expr(std::move(e)) {}
   void exec(std::shared_ptr<Env> env) override { expr->eval(env); }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    if (expr)
+      expr->codegen(ctx);
+  }
+#endif
 };
 
 class BlockStmt : public Stmt {
@@ -577,6 +792,14 @@ public:
     for (auto &stmt : statements)
       stmt->exec(blockEnv);
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    ctx.pushScope();
+    for (auto &stmt : statements)
+      stmt->codegen(ctx);
+    ctx.popScope();
+  }
+#endif
 };
 
 class VarDeclStmt : public Stmt {
@@ -592,6 +815,24 @@ public:
     Value val = init ? init->eval(env) : Value();
     env->define(name, val);
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    llvm::AllocaInst *alloca =
+        ctx.builder.CreateAlloca(ctx.doubleTy(), nullptr, name);
+    ctx.defineAlloca(name, alloca);
+    if (init) {
+      llvm::Value *v = init->codegen(ctx);
+      if (v) {
+        if (v->getType()->isIntegerTy(1))
+          v = ctx.builder.CreateUIToFP(v, ctx.doubleTy());
+        ctx.builder.CreateStore(v, alloca);
+      }
+    } else {
+      ctx.builder.CreateStore(llvm::ConstantFP::get(ctx.doubleTy(), 0.0),
+                              alloca);
+    }
+  }
+#endif
 };
 
 class AssignStmt : public Stmt {
@@ -636,6 +877,34 @@ public:
       }
     }
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    llvm::AllocaInst *alloca = ctx.findAlloca(name);
+    if (!alloca)
+      throw std::runtime_error("Unknown variable in assignment: " + name);
+    llvm::Value *newVal = value->codegen(ctx);
+    if (!newVal)
+      return;
+    if (newVal->getType()->isIntegerTy(1))
+      newVal = ctx.builder.CreateUIToFP(newVal, ctx.doubleTy());
+    if (op == "=") {
+      ctx.builder.CreateStore(newVal, alloca);
+      return;
+    }
+    llvm::Value *oldVal = ctx.builder.CreateLoad(ctx.doubleTy(), alloca, name);
+    llvm::Value *result = nullptr;
+    if (op == "+=")
+      result = ctx.builder.CreateFAdd(oldVal, newVal, "add_assign");
+    else if (op == "-=")
+      result = ctx.builder.CreateFSub(oldVal, newVal, "sub_assign");
+    else if (op == "*=")
+      result = ctx.builder.CreateFMul(oldVal, newVal, "mul_assign");
+    else if (op == "/=")
+      result = ctx.builder.CreateFDiv(oldVal, newVal, "div_assign");
+    if (result)
+      ctx.builder.CreateStore(result, alloca);
+  }
+#endif
 };
 
 class PrintStmt : public Stmt {
@@ -653,6 +922,29 @@ public:
     }
     std::cout << std::endl;
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    llvm::Function *printfFunc = ctx.module->getFunction("printf");
+    if (!printfFunc) {
+      std::vector<llvm::Type *> printfArgs;
+      printfArgs.push_back(ctx.i8PtrTy());
+      llvm::FunctionType *printfType =
+          llvm::FunctionType::get(ctx.i32Ty(), printfArgs, true);
+      printfFunc = llvm::Function::Create(
+          printfType, llvm::Function::ExternalLinkage, "printf", ctx.module);
+    }
+    for (size_t i = 0; i < exprs.size(); i++) {
+      llvm::Value *v = exprs[i]->codegen(ctx);
+      if (!v)
+        continue;
+      if (v->getType()->isIntegerTy(1))
+        v = ctx.builder.CreateUIToFP(v, ctx.doubleTy());
+      llvm::Value *fmt = ctx.builder.CreateGlobalStringPtr(
+          i < exprs.size() - 1 ? "%g " : "%g\n");
+      ctx.builder.CreateCall(printfFunc, {fmt, v});
+    }
+  }
+#endif
 };
 
 class IfStmt : public Stmt {
@@ -671,6 +963,39 @@ public:
     else if (elseStmt)
       elseStmt->exec(env);
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    llvm::Value *cond = condition->codegen(ctx);
+    if (!cond)
+      return;
+    if (!cond->getType()->isIntegerTy(1))
+      cond = ctx.builder.CreateFCmpONE(
+          cond, llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+    llvm::Function *fn = ctx.builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *thenBB =
+        llvm::BasicBlock::Create(ctx.context, "if.then", fn);
+    llvm::BasicBlock *elseBB =
+        elseStmt ? llvm::BasicBlock::Create(ctx.context, "if.else", fn)
+                 : nullptr;
+    llvm::BasicBlock *mergeBB =
+        llvm::BasicBlock::Create(ctx.context, "if.end", fn);
+    if (elseBB)
+      ctx.builder.CreateCondBr(cond, thenBB, elseBB);
+    else
+      ctx.builder.CreateCondBr(cond, thenBB, mergeBB);
+    ctx.builder.SetInsertPoint(thenBB);
+    thenStmt->codegen(ctx);
+    if (!ctx.builder.GetInsertBlock()->getTerminator())
+      ctx.builder.CreateBr(mergeBB);
+    if (elseBB) {
+      ctx.builder.SetInsertPoint(elseBB);
+      elseStmt->codegen(ctx);
+      if (!ctx.builder.GetInsertBlock()->getTerminator())
+        ctx.builder.CreateBr(mergeBB);
+    }
+    ctx.builder.SetInsertPoint(mergeBB);
+  }
+#endif
 };
 
 // NEW: Enhanced WhileStmt that handles break and continue
@@ -696,6 +1021,33 @@ public:
       // Break out of the loop
     }
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    llvm::Function *fn = ctx.builder.GetInsertBlock()->getParent();
+    llvm::BasicBlock *condBB =
+        llvm::BasicBlock::Create(ctx.context, "while.cond", fn);
+    llvm::BasicBlock *bodyBB =
+        llvm::BasicBlock::Create(ctx.context, "while.body", fn);
+    llvm::BasicBlock *exitBB =
+        llvm::BasicBlock::Create(ctx.context, "while.exit", fn);
+    ctx.builder.CreateBr(condBB);
+    ctx.builder.SetInsertPoint(condBB);
+    ctx.loopStack.push_back({condBB, exitBB});
+    llvm::Value *cond = condition->codegen(ctx);
+    if (!cond)
+      cond = llvm::ConstantInt::get(ctx.i1Ty(), 1);
+    else if (!cond->getType()->isIntegerTy(1))
+      cond = ctx.builder.CreateFCmpONE(
+          cond, llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+    ctx.builder.CreateCondBr(cond, bodyBB, exitBB);
+    ctx.builder.SetInsertPoint(bodyBB);
+    body->codegen(ctx);
+    if (!ctx.builder.GetInsertBlock()->getTerminator())
+      ctx.builder.CreateBr(condBB);
+    ctx.loopStack.pop_back();
+    ctx.builder.SetInsertPoint(exitBB);
+  }
+#endif
 };
 
 class ReturnStmt : public Stmt {
@@ -708,18 +1060,54 @@ public:
     Value val = value ? value->eval(env) : Value();
     throw ReturnException(val);
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    if (value) {
+      llvm::Value *v = value->codegen(ctx);
+      if (v) {
+        if (v->getType()->isIntegerTy(1))
+          v = ctx.builder.CreateUIToFP(v, ctx.doubleTy());
+        ctx.builder.CreateRet(v);
+      } else {
+        ctx.builder.CreateRet(llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+      }
+    } else {
+      llvm::Type *retTy = ctx.currentFunction
+                              ? ctx.currentFunction->getReturnType()
+                              : llvm::Type::getInt32Ty(ctx.context);
+      if (retTy->isIntegerTy())
+        ctx.builder.CreateRet(llvm::ConstantInt::get(retTy, 0));
+      else
+        ctx.builder.CreateRet(llvm::ConstantFP::get(retTy, 0.0));
+    }
+  }
+#endif
 };
 
 // NEW: Break statement
 class BreakStmt : public Stmt {
 public:
   void exec(std::shared_ptr<Env>) override { throw BreakException(); }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    if (ctx.loopStack.empty())
+      throw std::runtime_error("break outside loop");
+    ctx.builder.CreateBr(ctx.loopStack.back().exit);
+  }
+#endif
 };
 
 // NEW: Continue statement
 class ContinueStmt : public Stmt {
 public:
   void exec(std::shared_ptr<Env>) override { throw ContinueException(); }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    if (ctx.loopStack.empty())
+      throw std::runtime_error("continue outside loop");
+    ctx.builder.CreateBr(ctx.loopStack.back().cond);
+  }
+#endif
 };
 
 class FunctionStmt : public Stmt {
@@ -737,6 +1125,35 @@ public:
     auto func = std::make_shared<Function>(params, body, env);
     env->define(name, Value(func));
   }
+#ifdef USE_LLVM_CODEGEN
+  void codegen(CodeGenContext &ctx) override {
+    std::vector<llvm::Type *> paramTypes(params.size(), ctx.doubleTy());
+    llvm::FunctionType *FT =
+        llvm::FunctionType::get(ctx.doubleTy(), paramTypes, false);
+    llvm::Function *F = llvm::Function::Create(
+        FT, llvm::Function::InternalLinkage, name, ctx.module);
+    ctx.functions[name] = F;
+    unsigned idx = 0;
+    for (auto &arg : F->args())
+      arg.setName(params[idx++]);
+    llvm::BasicBlock *BB = llvm::BasicBlock::Create(ctx.context, "entry", F);
+    ctx.builder.SetInsertPoint(BB);
+    ctx.pushScope();
+    idx = 0;
+    for (auto &arg : F->args()) {
+      llvm::AllocaInst *alloca =
+          ctx.builder.CreateAlloca(ctx.doubleTy(), nullptr, arg.getName());
+      ctx.builder.CreateStore(&arg, alloca);
+      ctx.defineAlloca(std::string(arg.getName()), alloca);
+    }
+    ctx.currentFunction = F;
+    body->codegen(ctx);
+    ctx.currentFunction = nullptr;
+    if (!ctx.builder.GetInsertBlock()->getTerminator())
+      ctx.builder.CreateRet(llvm::ConstantFP::get(ctx.doubleTy(), 0.0));
+    ctx.popScope();
+  }
+#endif
 };
 
 // CallExpr implementation
@@ -758,8 +1175,8 @@ Value CallExpr::eval(std::shared_ptr<Env> env) {
   try {
     func->body->exec(callEnv);
     return Value(); // No explicit return
-  } catch (ReturnException &e) {
-    return e.value;
+  } catch (ReturnException &retEx) {
+    return retEx.value;
   }
 }
 
@@ -1145,5 +1562,42 @@ public:
     return statements;
   }
 };
+
+#ifdef USE_LLVM_CODEGEN
+// ===== Top-level IR generation: AST -> LLVM Module =====
+inline void generateProgram(llvm::Module *module, llvm::LLVMContext &context,
+                            llvm::IRBuilder<> &builder,
+                            const std::vector<std::unique_ptr<Stmt>> &program) {
+  CodeGenContext ctx{builder, module, context};
+  ctx.pushScope();
+
+  llvm::FunctionType *mainFT =
+      llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
+  llvm::Function *mainFunc = llvm::Function::Create(
+      mainFT, llvm::Function::ExternalLinkage, "main", module);
+  llvm::BasicBlock *mainEntry =
+      llvm::BasicBlock::Create(context, "entry", mainFunc);
+  builder.SetInsertPoint(mainEntry);
+
+  for (const auto &stmt : program) {
+    if (dynamic_cast<FunctionStmt *>(stmt.get())) {
+      llvm::BasicBlock *savedBlock = builder.GetInsertBlock();
+      stmt->codegen(ctx);
+      builder.SetInsertPoint(savedBlock);
+    }
+  }
+  builder.SetInsertPoint(mainEntry);
+  for (const auto &stmt : program) {
+    if (!dynamic_cast<FunctionStmt *>(stmt.get()))
+      stmt->codegen(ctx);
+  }
+
+  llvm::BasicBlock *cur = builder.GetInsertBlock();
+  if (cur && !cur->getTerminator())
+    builder.CreateRet(
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0));
+  ctx.popScope();
+}
+#endif
 
 } // namespace Interpreter_V4
