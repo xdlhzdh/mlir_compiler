@@ -423,6 +423,7 @@ class LiteralExpr : public Expr {
 
 public:
   LiteralExpr(Value v) : value(v) {}
+  const Value &getValue() const { return value; }
   Value eval(std::shared_ptr<Env>) override { return value; }
 #ifdef USE_LLVM_CODEGEN
   llvm::Value *codegen(CodeGenContext &ctx) override {
@@ -434,6 +435,9 @@ public:
       return llvm::ConstantFP::get(ctx.doubleTy(), value.toNumber());
     case ValueType::BOOL:
       return llvm::ConstantInt::get(ctx.i1Ty(), value.toBool() ? 1 : 0);
+    case ValueType::STRING:
+      return ctx.builder.CreateGlobalStringPtr(
+          std::get<std::string>(value.data));
     default:
       return llvm::ConstantFP::get(ctx.doubleTy(), 0.0);
     }
@@ -745,7 +749,26 @@ public:
     }
   }
 #ifdef USE_LLVM_CODEGEN
-  llvm::Value *codegen(CodeGenContext &) override { return nullptr; }
+  llvm::Value *codegen(CodeGenContext &ctx) override {
+    // Static typeof for literals; variables default to "double" in IR
+    if (LiteralExpr *lit = dynamic_cast<LiteralExpr *>(operand.get())) {
+      switch (lit->getValue().type) {
+      case ValueType::INT:
+        return ctx.builder.CreateGlobalStringPtr("int");
+      case ValueType::DOUBLE:
+        return ctx.builder.CreateGlobalStringPtr("double");
+      case ValueType::STRING:
+        return ctx.builder.CreateGlobalStringPtr("string");
+      case ValueType::BOOL:
+        return ctx.builder.CreateGlobalStringPtr("bool");
+      case ValueType::FUNCTION:
+        return ctx.builder.CreateGlobalStringPtr("function");
+      default:
+        return ctx.builder.CreateGlobalStringPtr("none");
+      }
+    }
+    return ctx.builder.CreateGlobalStringPtr("double");
+  }
 #endif
 };
 
@@ -937,10 +960,16 @@ public:
       llvm::Value *v = exprs[i]->codegen(ctx);
       if (!v)
         continue;
-      if (v->getType()->isIntegerTy(1))
-        v = ctx.builder.CreateUIToFP(v, ctx.doubleTy());
-      llvm::Value *fmt = ctx.builder.CreateGlobalStringPtr(
-          i < exprs.size() - 1 ? "%g " : "%g\n");
+      llvm::Value *fmt;
+      if (v->getType()->isPointerTy()) {
+        fmt = ctx.builder.CreateGlobalStringPtr(i < exprs.size() - 1 ? "%s "
+                                                                     : "%s\n");
+      } else {
+        if (v->getType()->isIntegerTy(1))
+          v = ctx.builder.CreateUIToFP(v, ctx.doubleTy());
+        fmt = ctx.builder.CreateGlobalStringPtr(i < exprs.size() - 1 ? "%g "
+                                                                     : "%g\n");
+      }
       ctx.builder.CreateCall(printfFunc, {fmt, v});
     }
   }

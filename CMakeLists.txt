@@ -74,6 +74,34 @@ if(LLVM_CONFIG)
     "${LLVM_CXXFLAGS} -DUSE_LLVM_CODEGEN -fexceptions")
   target_link_libraries(demo_interpreter_v4_llvm ${LLVM_LDFLAGS}
     ${LLVM_LIBS_CORE})
+
+  # Path to output .ll file: output directory of the project, file name interpreter_v4.ll
+  set(OUTPUT_LL_DIR ${PROJECT_SOURCE_DIR}/output)
+  set(OUTPUT_LL_FILE ${OUTPUT_LL_DIR}/interpreter_v4.ll)
+  set(OUTPUT_LL_SSA_FILE ${OUTPUT_LL_DIR}/interpreter_v4_ssa.ll)
+  set(OUTPUT_LL_OPT_FILE ${OUTPUT_LL_DIR}/interpreter_v4_opt.ll)
+
+  # Custom target: generate .ll and execute with lli
+  file(MAKE_DIRECTORY ${OUTPUT_LL_DIR})
+  set(VERIFY_IR_SCRIPT ${PROJECT_SOURCE_DIR}/cmake/verify_ir.cmake)
+  add_custom_target(demo_interpreter_v4_llvm_run
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating LLVM IR: ${OUTPUT_LL_FILE}"
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/demo_interpreter_v4_llvm ${OUTPUT_LL_FILE}
+    COMMAND ${CMAKE_COMMAND} -E echo "Verifying LLVM IR"
+    COMMAND ${CMAKE_COMMAND} -DINPUT_FILE=${OUTPUT_LL_FILE} -P ${VERIFY_IR_SCRIPT}
+    COMMAND ${CMAKE_COMMAND} -E echo "Generating SSA IR: ${OUTPUT_LL_SSA_FILE}"
+    COMMAND opt -passes=mem2reg ${OUTPUT_LL_FILE} -S -o ${OUTPUT_LL_SSA_FILE}
+    COMMAND ${CMAKE_COMMAND} -E echo "Verifying SSA IR"
+    COMMAND ${CMAKE_COMMAND} -DINPUT_FILE=${OUTPUT_LL_SSA_FILE} -P ${VERIFY_IR_SCRIPT}
+    COMMAND ${CMAKE_COMMAND} -E echo "Optimizing SSA IR: ${OUTPUT_LL_OPT_FILE}"
+    COMMAND opt -passes=mem2reg,instcombine,simplifycfg ${OUTPUT_LL_SSA_FILE} -S -o ${OUTPUT_LL_OPT_FILE}
+    COMMAND ${CMAKE_COMMAND} -E echo "Verifying Optimized SSA IR: ${OUTPUT_LL_OPT_FILE}"
+    COMMAND ${CMAKE_COMMAND} -DINPUT_FILE=${OUTPUT_LL_OPT_FILE} -P ${VERIFY_IR_SCRIPT}
+    COMMAND ${CMAKE_COMMAND} -E echo "Running lli on Optimized SSA IR: ${OUTPUT_LL_OPT_FILE}"
+    COMMAND lli ${OUTPUT_LL_OPT_FILE}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    DEPENDS demo_interpreter_v4_llvm
+    COMMENT "Generate interpreter_v4.ll, verify, generate SSA IR, optimize SSA IR, and execute with lli")
 else()
   message(WARNING "llvm-config not found. LLVM demo targets will not be built.")
 endif()
