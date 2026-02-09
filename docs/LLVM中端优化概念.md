@@ -1,4 +1,4 @@
-# LLVM 优化 Pass 完整总结：mem2reg, instcombine, simplifycfg, sroa
+# LLVM Middle-End Optimization Concepts
 
 本文档汇总 LLVM 中与 SSA 构建、控制流简化和内存提升相关的核心优化 Pass：`mem2reg`、`instcombine`、`simplifycfg`、`sroa`。它们协同工作，将前端生成的原始 IR 转换为高效、简洁的 SSA（静态单赋值）形式；其中 **sroa** 不仅处理结构体/数组，也处理标量类型的复杂内存操作（如类型双关）。
 

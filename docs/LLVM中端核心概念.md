@@ -1,4 +1,4 @@
-# 编译器中端核心概念详解（补充 Φ 的 IR 示例完整版）
+# LLVM 中端核心概念详解（补充 Φ 的 IR 示例完整版）
 
 在编译器世界里，中端（Middle-end）就像是一个**炼金炉**：
 它把混乱的源代码逻辑，转化为一种**高度结构化、接近数学模型**的 IR，使得各种优化成为可能。
@@ -227,7 +227,7 @@ BB3:
 
 ```c
 int x = 0;
-while (cond) {
+while (x < 3) {
   x = x + 1;
 }
 return x;
@@ -236,14 +236,17 @@ return x;
 ### 5.2 SSA IR
 
 ```
-BB0:
-  %x0 = 0
+Entry:
   br label %Loop
 
 Loop:
-  %x1 = phi i32 [ %x0, %BB0 ], [ %x2, %Loop ]
+  %x1 = phi i32 [ 0, %Entry ], [ %x2, %Body ]
+  %cond = icmp slt %x1, 3
+  br i1 %cond, label %Body, label %Exit
+
+Body:
   %x2 = add i32 %x1, 1
-  br i1 %cond, label %Loop, label %Exit
+  br label %Loop
 
 Exit:
   ret i32 %x1
@@ -430,7 +433,118 @@ try {
 
 ---
 
-## 10. 从 IR 到 SSA 的标准构造流程（五步）
+## 10. Dominator Tree 详解（含示例）
+
+### 10.1 为什么需要「支配」？
+
+在 CFG 里我们会问：**从入口到某块 B 的每一条路径，都会经过哪些块？**  
+答案就是「谁支配 B」——支配关系是 SSA 里放 Φ、做很多优化的基础。
+
+### 10.2 三个定义
+
+| 概念 | 定义 |
+|------|------|
+| **支配 (dominates)** | 节点 A **支配** 节点 B，当且仅当：从入口到 B 的**每一条**路径都经过 A。记作 A dom B。 |
+| **严格支配 (strictly dominates)** | A 支配 B 且 A ≠ B。记作 A sdom B。 |
+| **直接支配者 (immediate dominator, idom)** | B 的 **idom** 是「最靠近 B」的那个支配者：即 A sdom B，且不存在节点 C 使得 A sdom C sdom B。 |
+
+约定：入口块支配自己；其他块至少被入口块支配。
+
+### 10.3 支配树 (Dominator Tree)
+
+把每个块 B 连到其 **idom(B)** 上，得到一棵以入口为根的树，就是 **Dominator Tree**。
+
+- **树边**：A → B 表示 A = idom(B)。
+- **性质**：若 A dom B，则在这棵树上 A 是 B 的祖先（含 A=B）。
+
+### 10.4 示例一：if/else 汇合（与第 1 节 CFG 一致）
+
+仍用第 1 节的 CFG：
+
+```
+      [BB0]  entry
+      /   \
+  [BB1]   [BB2]
+      \   /
+       [BB3]  exit
+```
+
+**从入口到各块的所有路径：**
+
+| 块 | 从 entry 到该块的路径 | 必经节点（支配者集合） |
+|----|------------------------|------------------------|
+| BB0 | (入口) | {BB0} |
+| BB1 | BB0→BB1 | {BB0, BB1} |
+| BB2 | BB0→BB2 | {BB0, BB2} |
+| BB3 | BB0→BB1→BB3，BB0→BB2→BB3 | {BB0, BB3} |
+
+**直接支配者 idom：**
+
+- idom(BB0) = 无（入口）
+- idom(BB1) = BB0（到 BB1 的路径只有 BB0→BB1）
+- idom(BB2) = BB0
+- idom(BB3) = BB0（到 BB3 的两条路径都只共同经过 BB0 和 BB3，最靠近 BB3 的是 BB0）
+
+**支配树：**
+
+```
+        BB0 (根)
+       /  |  \
+     BB1 BB2 BB3
+```
+
+即 BB1、BB2、BB3 的父节点都是 BB0。
+
+### 10.5 示例二：两前驱但只有一个支配者（与 SSA 五步中的 CFG 一致）
+
+对应「从 IR 到 SSA」里的 CFG：
+
+```
+BB0:  x = 1;  if c goto BB2 else BB1
+BB1:  x = 2;  goto BB2
+BB2:  print(x)
+```
+
+**CFG 图（文字版）：**
+
+```
+        [BB0]  entry
+        /  |
+       v   | 
+     [BB1] |  
+        \  |    
+         v v
+        [BB2]  exit
+```
+
+（BB0 条件为假走 BB1 再进入 BB2，条件为真直连 BB2；BB2 有两个前驱：BB0 与 BB1。）
+
+结构：BB0 → BB1，BB0 → BB2；BB1 → BB2。
+
+| 块 | 到该块的路径 | 支配者集合 | idom |
+|----|--------------|------------|------|
+| BB0 | (入口) | {BB0} | — |
+| BB1 | BB0→BB1 | {BB0, BB1} | BB0 |
+| BB2 | BB0→BB2，BB0→BB1→BB2 | {BB0, BB2} | BB0 |
+
+注意：BB1 **不支配** BB2，因为存在路径 BB0→BB2 不经过 BB1。所以「BB1、BB0 都是 BB2 的前驱」说的是 **CFG 前驱**，不是支配关系；在支配意义上，只有 BB0 和 BB2 自身支配 BB2。
+
+**支配树：**
+
+```
+    BB0 (根)
+   /     \
+ BB1     BB2
+```
+
+### 10.6 与 SSA 的关系（简要）
+
+- **Φ 放在哪？** 通常放在「**支配边界 (dominance frontier)**」上的块：即「刚好多条路径第一次汇合」的块。上面示例里 BB3、BB2 就是这种汇合点，所以会在那里插 Φ。
+- **定义是否必经？** 若变量 v 在块 A 里定义，则 v 的 SSA 定义「必经」A；要到达块 B 使用 v，必须经过 A，当且仅当 A dom B。所以 Dominator Tree 直接回答「这个定义能否到达某使用点」。
+
+---
+
+## 11. 从 IR 到 SSA 的标准构造流程（五步）
 
 ### Step 1：线性 IR
 
@@ -466,10 +580,10 @@ BB2:
   print(x)
 ```
 
-### Step 3：计算支配树
+### Step 3：计算 Dominator Tree（详见第 10 节）
 
-- BB0 支配所有
-- BB1、BB0 都是 BB2 的前驱
+- 从 CFG 计算每个块的支配者集合与直接支配者 idom，得到 Dominator Tree。
+- 本例：BB0 支配 BB1、BB2；BB2 的支配者仅为 BB0 与自身（BB1 是 BB2 的 CFG 前驱，但不支配 BB2）。
 
 ### Step 4：插入 Φ
 
@@ -496,7 +610,7 @@ BB2:
 
 ---
 
-## 11. 中端三剑客（终极总结）
+## 12. 中端三剑客（终极总结）
 
 | 工具 | 解决的问题 |
 |------|------------|
