@@ -76,7 +76,7 @@ if(LLVM_CONFIG)
     COMMAND ${CMAKE_COMMAND} -DDOMAIN=pass -DBINARY_DIR=${CMAKE_BINARY_DIR}
       -P ${PROJECT_SOURCE_DIR}/cmake/run.cmake
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    DEPENDS run_simple_pass
+    DEPENDS run_simple_pass run_remove_trivial_block run_remove_trivial_loop run_remove_zero_trip_loop
     COMMENT "Run pass only")
 endif()
 

@@ -4,6 +4,9 @@ if(NOT LLVM_CONFIG)
 endif()
 
 add_library(SimplePass MODULE
+  remove_trivial_block_passes.cpp
+  remove_trivial_loop_passes.cpp
+  remove_zero_trip_loop_passes.cpp
   simple_pass_plugin.cpp
   simple_pass_passes.cpp
 )
