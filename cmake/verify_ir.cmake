@@ -6,8 +6,7 @@ execute_process(
   COMMAND opt -passes=verify -disable-output ${INPUT_FILE}
   RESULT_VARIABLE VERIFY_RESULT
   OUTPUT_VARIABLE VERIFY_STDOUT
-  ERROR_VARIABLE VERIFY_STDERR
-)
+  ERROR_VARIABLE VERIFY_STDERR)
 
 if(VERIFY_RESULT EQUAL 0)
   message(STATUS "Verification result: OK")

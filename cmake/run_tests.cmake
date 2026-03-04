@@ -1,9 +1,8 @@
-# Run ctest; only DOMAIN=ast and DOMAIN=pass supported.
-#   DOMAIN=ast  -> ctest -R "^V[1-4]_" (ast tests)
-#   DOMAIN=pass -> ctest -L pass (pass tests)
-#   no DOMAIN   -> ctest (all)
-# Invoke: cmake -DDOMAIN=ast -DBINARY_DIR=/path/to/build -P run_tests.cmake
-# From build: make test [DOMAIN=ast] | make test_ast | make test_pass
+# Run ctest; only DOMAIN=ast and DOMAIN=pass supported. DOMAIN=ast  -> ctest -R
+# "^V[1-4]_" (ast tests) DOMAIN=pass -> ctest -L pass (pass tests) no DOMAIN ->
+# ctest (all) Invoke: cmake -DDOMAIN=ast -DBINARY_DIR=/path/to/build -P
+# run_tests.cmake From build: make test [DOMAIN=ast] | make test_ast | make
+# test_pass
 
 if(NOT BINARY_DIR)
   set(BINARY_DIR ${CMAKE_CURRENT_SOURCE_DIR})

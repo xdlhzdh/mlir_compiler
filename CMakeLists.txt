@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(SimpleCompiler)
-# Usage (from build dir):
-#   make run | run_ast | run_pass | run DOMAIN=ast | run DOMAIN=pass
-#   make test (全量) | make run_tests DOMAIN=ast|pass (按域) | test_ast | test_pass
+# Usage (from build dir): make run | run_ast | run_pass | run DOMAIN=ast | run
+# DOMAIN=pass make test (全量) | make run_tests DOMAIN=ast|pass (按域) | test_ast |
+# test_pass
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,9 +43,12 @@ add_subdirectory(tests)
 
 # Pass UT: script test (opt + plugin)；C++ UT (pass 源码) 在 tests/CMakeLists.txt
 if(LLVM_CONFIG)
-  add_test(NAME Pass_SimplePass
-    COMMAND ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR} -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
-      -P ${PROJECT_SOURCE_DIR}/cmake/test_pass.cmake)
+  add_test(
+    NAME Pass_SimplePass
+    COMMAND
+      ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR}
+      -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -P
+      ${PROJECT_SOURCE_DIR}/cmake/test_pass.cmake)
   set_tests_properties(Pass_SimplePass PROPERTIES LABELS "pass")
 endif()
 
@@ -56,51 +59,72 @@ if(LLVM_CONFIG)
 endif()
 
 # run: DOMAIN=ast|pass|(empty=all), PASS=simple_pass when DOMAIN=pass
-add_custom_target(run
-  COMMAND ${PROJECT_SOURCE_DIR}/cmake/run_run.sh
-    ${CMAKE_COMMAND} ${CMAKE_BINARY_DIR} ${PROJECT_SOURCE_DIR}/cmake/run.cmake
-    "\$(DOMAIN)" "\$(PASS)" ${RUN_HAVE_PASS}
+add_custom_target(
+  run
+  COMMAND
+    ${PROJECT_SOURCE_DIR}/cmake/run_run.sh ${CMAKE_COMMAND} ${CMAKE_BINARY_DIR}
+    ${PROJECT_SOURCE_DIR}/cmake/run.cmake "\$(DOMAIN)" "\$(PASS)"
+    ${RUN_HAVE_PASS}
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  DEPENDS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3 run_interpreter_v4
-          run_interpreter_antlr run_nfa_dfa
+  DEPENDS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3
+          run_interpreter_v4 run_interpreter_antlr run_nfa_dfa
   COMMENT "Run (make run [DOMAIN=ast|pass] [PASS=simple_pass])")
-add_custom_target(run_ast
-  COMMAND ${CMAKE_COMMAND} -DDOMAIN=ast -DBINARY_DIR=${CMAKE_BINARY_DIR}
-    -P ${PROJECT_SOURCE_DIR}/cmake/run.cmake
+add_custom_target(
+  run_ast
+  COMMAND ${CMAKE_COMMAND} -DDOMAIN=ast -DBINARY_DIR=${CMAKE_BINARY_DIR} -P
+          ${PROJECT_SOURCE_DIR}/cmake/run.cmake
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  DEPENDS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3 run_interpreter_v4
-          run_interpreter_antlr run_nfa_dfa
+  DEPENDS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3
+          run_interpreter_v4 run_interpreter_antlr run_nfa_dfa
   COMMENT "Run ast only")
 if(LLVM_CONFIG)
-  add_custom_target(run_pass
-    COMMAND ${CMAKE_COMMAND} -DDOMAIN=pass -DBINARY_DIR=${CMAKE_BINARY_DIR}
-      -P ${PROJECT_SOURCE_DIR}/cmake/run.cmake
+  add_custom_target(
+    run_pass
+    COMMAND ${CMAKE_COMMAND} -DDOMAIN=pass -DBINARY_DIR=${CMAKE_BINARY_DIR} -P
+            ${PROJECT_SOURCE_DIR}/cmake/run.cmake
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    DEPENDS run_simple_pass run_remove_trivial_block run_remove_trivial_loop run_remove_zero_trip_loop
+    DEPENDS run_simple_pass run_remove_trivial_block run_remove_trivial_loop
+            run_remove_zero_trip_loop
     COMMENT "Run pass only")
 endif()
 
+# MLIR：需 find_package(MLIR) 成功时才有 conv_bn_optimized 等目标；无 MLIR 时 make run_mlir
+# 会报错
+add_custom_target(
+  run_mlir
+  COMMAND ${CMAKE_COMMAND} -DDOMAIN=mlir -DBINARY_DIR=${CMAKE_BINARY_DIR} -P
+          ${PROJECT_SOURCE_DIR}/cmake/run.cmake
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT
+    "Run MLIR only (make run_mlir or make run DOMAIN=mlir PASS=conv_bn_fusion)")
+
 # 修补 Makefile 的 test 目标使 make test DOMAIN=pass|ast 生效；run 依赖之以便首次 make run 后即生效
 set(CTEST_WRAPPER "${PROJECT_SOURCE_DIR}/cmake/ctest_wrapper.sh")
-add_custom_target(patch_test_domain
-  COMMAND sh ${CTEST_WRAPPER} --patch ${CMAKE_BINARY_DIR}/Makefile ${CTEST_WRAPPER}
+add_custom_target(
+  patch_test_domain
+  COMMAND sh ${CTEST_WRAPPER} --patch ${CMAKE_BINARY_DIR}/Makefile
+          ${CTEST_WRAPPER}
   COMMENT "Patch test target for make test DOMAIN=ast|pass (idempotent)")
 add_dependencies(run patch_test_domain)
 
-# test 按域：make run_tests DOMAIN=ast|pass 或 make test_ast / test_pass；打补丁后 make test DOMAIN=pass 也生效
-add_custom_target(run_tests
-  COMMAND ${PROJECT_SOURCE_DIR}/cmake/run_tests.sh
-    ${CMAKE_COMMAND} ${CMAKE_BINARY_DIR} ${PROJECT_SOURCE_DIR}/cmake/run_tests.cmake
-    "\$(DOMAIN)"
+# test 按域：make run_tests DOMAIN=ast|pass 或 make test_ast / test_pass；打补丁后 make
+# test DOMAIN=pass 也生效
+add_custom_target(
+  run_tests
+  COMMAND
+    ${PROJECT_SOURCE_DIR}/cmake/run_tests.sh ${CMAKE_COMMAND}
+    ${CMAKE_BINARY_DIR} ${PROJECT_SOURCE_DIR}/cmake/run_tests.cmake "\$(DOMAIN)"
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Run tests by domain (make run_tests [DOMAIN=ast|pass])")
-add_custom_target(test_ast
-  COMMAND ${CMAKE_COMMAND} -DDOMAIN=ast -DBINARY_DIR=${CMAKE_BINARY_DIR}
-    -P ${PROJECT_SOURCE_DIR}/cmake/run_tests.cmake
+add_custom_target(
+  test_ast
+  COMMAND ${CMAKE_COMMAND} -DDOMAIN=ast -DBINARY_DIR=${CMAKE_BINARY_DIR} -P
+          ${PROJECT_SOURCE_DIR}/cmake/run_tests.cmake
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Test ast only")
-add_custom_target(test_pass
-  COMMAND ${CMAKE_COMMAND} -DDOMAIN=pass -DBINARY_DIR=${CMAKE_BINARY_DIR}
-    -P ${PROJECT_SOURCE_DIR}/cmake/run_tests.cmake
+add_custom_target(
+  test_pass
+  COMMAND ${CMAKE_COMMAND} -DDOMAIN=pass -DBINARY_DIR=${CMAKE_BINARY_DIR} -P
+          ${PROJECT_SOURCE_DIR}/cmake/run_tests.cmake
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Test pass only")

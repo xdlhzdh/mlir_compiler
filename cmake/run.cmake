@@ -1,9 +1,10 @@
-# Run executables and/or pass targets; only DOMAIN=ast and DOMAIN=pass supported.
+# Run executables and/or pass/mlir targets; DOMAIN=ast | pass | mlir.
 #   DOMAIN=ast  -> run only ast (interpreter v1..v4, antlr, nfa_dfa)
 #   DOMAIN=pass -> run only pass targets (opt + plugin); PASS=simple_pass to run one plugin
-#   DOMAIN=     -> run all (ast + pass when RUN_HAVE_PASS)
-# Invoke: cmake -DDOMAIN=pass -DPASS=simple_pass -DBINARY_DIR=/path/to/build -P run.cmake
-# From build: make run [DOMAIN=ast] | make run DOMAIN=pass [PASS=simple_pass] | make run_ast | make run_pass
+#   DOMAIN=mlir -> run MLIR targets (conv_bn_model.py + mlir-opt); PASS=conv_bn_fusion to run one
+#   DOMAIN=     -> run all (ast + pass when RUN_HAVE_PASS; mlir not included)
+# Invoke: cmake -DDOMAIN=mlir -DPASS=conv_bn_fusion -DBINARY_DIR=/path/to/build -P run.cmake
+# From build: make run DOMAIN=mlir PASS=conv_bn_fusion | make run_mlir
 
 if(NOT BINARY_DIR)
   message(FATAL_ERROR "BINARY_DIR required")
@@ -40,14 +41,28 @@ function(run_pass_domain)
   endif()
 endfunction()
 
+# PASS=conv_bn_fusion -> run conv_bn_optimized (conv_bn_model.py -o model.mlir, mlir-opt -> optimized.mlir)
+function(run_mlir_domain)
+  message(STATUS "========== Run MLIR (PASS=${PASS}) ==========")
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -DPASS=${PASS} -DBINARY_DIR=${BINARY_DIR} -P ${SCRIPT_DIR}/run_mlir.cmake
+    WORKING_DIRECTORY ${BINARY_DIR}
+    RESULT_VARIABLE rv)
+  if(rv)
+    message(FATAL_ERROR "run_mlir.cmake failed with ${rv}")
+  endif()
+endfunction()
+
 if(DOMAIN STREQUAL "ast")
   foreach(t IN LISTS AST_RUNS)
     run_one(${t})
   endforeach()
 elseif(DOMAIN STREQUAL "pass")
   run_pass_domain()
+elseif(DOMAIN STREQUAL "mlir")
+  run_mlir_domain()
 elseif(DOMAIN)
-  message(FATAL_ERROR "Unsupported DOMAIN=${DOMAIN}; use ast or pass")
+  message(FATAL_ERROR "Unsupported DOMAIN=${DOMAIN}; use ast, pass, or mlir")
 else()
   foreach(t IN LISTS AST_RUNS)
     run_one(${t})

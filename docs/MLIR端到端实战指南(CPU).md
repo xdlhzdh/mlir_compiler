@@ -36,54 +36,51 @@ QEMU / Spike
 
 ---
 
-# 1️⃣ 环境准备
+# 1️⃣ 环境准备(root)
 
 ## 1.1 获取源码
 
+直接使用 **torch-mlir 仓库内的 llvm-project 与 stablehlo 子模块**，无需单独再 clone 一份 llvm-project，版本由 torch-mlir 锁定，避免 tblgen/ODS 与后续编 torch-mlir 时不一致。
+
 ```bash
 # 统一路径变量（从第一步开始）
-export WORK_HOME="${WORK_HOME:-$HOME/mlir-matmul}"
-export LLVM_HOME="${LLVM_HOME:-$WORK_HOME/llvm-project}"
+export WORK_HOME="${WORK_HOME:-/opt}"
 export TORCH_MLIR_HOME="${TORCH_MLIR_HOME:-$WORK_HOME/torch-mlir}"
 
 mkdir -p "$WORK_HOME"
 cd "$WORK_HOME"
 
 git clone https://github.com/llvm/torch-mlir.git "$TORCH_MLIR_HOME"
-# 仅拉取构建需要的子模块（stablehlo），避免全量子模块开销
-git -C "$TORCH_MLIR_HOME" submodule update --init externals/stablehlo
-
-# 关键：用 torch-mlir 锁定的 LLVM 提交，避免 tblgen/ODS 版本不匹配
-if [ -f "$TORCH_MLIR_HOME/build_tools/llvm_version.txt" ]; then
-  LLVM_COMMIT=$(cat "$TORCH_MLIR_HOME/build_tools/llvm_version.txt")
-else
-  LLVM_COMMIT=$(git -C "$TORCH_MLIR_HOME" ls-tree HEAD externals/llvm-project | awk '{print $3}')
-fi
-git clone https://github.com/llvm/llvm-project.git "$LLVM_HOME"
-git -C "$LLVM_HOME" checkout "$LLVM_COMMIT"
+# 拉取构建所需的子模块：llvm-project 与 stablehlo（均位于 torch-mlir 仓库内）
+git -C "$TORCH_MLIR_HOME" submodule update --init externals/llvm-project externals/stablehlo
 ```
+
+之后 LLVM 源码与构建目录为：`$TORCH_MLIR_HOME/externals/llvm-project`、`$TORCH_MLIR_HOME/externals/llvm-project/build`（见 1.2.1）。
 
 ---
 
-## 1.2 编译 LLVM + MLIR
+## 1.2 编译启用 StableHLO 的 LLVM + MLIR（推荐：统一工具链）
+
+本指南推荐使用 **启用 StableHLO 的 LLVM**：在同一安装前缀下安装 LLVM/MLIR 与 StableHLO，得到一套工具链，**不再使用“单独 LLVM-project + 单独安装 StableHLO”的分散方式**。这样 simple_compiler 的 MLIR GPU 目标只需指向该工具链即可。
+
+### 1.2.1 构建 LLVM + MLIR（使用 torch-mlir 内的 llvm-project）
+
+在 **torch-mlir 的 externals/llvm-project** 下配置并构建，无需单独 clone 的 llvm-project。
 
 ```bash
-cd "$LLVM_HOME"
+export LLVM_SOURCE_DIR="${LLVM_SOURCE_DIR:-$TORCH_MLIR_HOME/externals/llvm-project}"
+export LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-$LLVM_SOURCE_DIR/build}"
 
-if [ -f "$TORCH_MLIR_HOME/build_tools/llvm_version.txt" ]; then
-  LLVM_COMMIT=$(cat "$TORCH_MLIR_HOME/build_tools/llvm_version.txt")
-else
-  LLVM_COMMIT=$(git -C "$TORCH_MLIR_HOME" ls-tree HEAD externals/llvm-project | awk '{print $3}')
-fi
-git fetch --all
-git checkout "$LLVM_COMMIT"
-
+cd "$LLVM_SOURCE_DIR"
 mkdir -p build && cd build
 
 # torch-mlir/MLIR 推荐使用 clang 工具链，避免 gcc 无法识别部分 -W 参数
 command -v clang >/dev/null && command -v clang++ >/dev/null
 export CC=clang
 export CXX=clang++
+
+# 统一安装前缀：与后续 StableHLO 安装到同一前缀，形成“启用 StableHLO 的 LLVM”
+export LLVM_INSTALL_PREFIX="${LLVM_INSTALL_PREFIX:-/usr/local}"
 
 cmake -G Ninja ../llvm \
   -DCMAKE_C_COMPILER="$CC" \
@@ -92,71 +89,113 @@ cmake -G Ninja ../llvm \
   -DLLVM_TARGETS_TO_BUILD="RISCV;X86" \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_ENABLE_ASSERTIONS=ON \
-  -DMLIR_ENABLE_BINDINGS_PYTHON=ON
+  -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
+  -DCMAKE_INSTALL_PREFIX="$LLVM_INSTALL_PREFIX"
 
-# 注意：后续要编 torch-mlir，这里必须先完成 LLVM/MLIR 库的全量构建
+# 后续要编 torch-mlir 与 StableHLO，这里必须先完成 LLVM/MLIR 全量构建
 ninja
 ninja mlir-tblgen mlir-python-sources
+# 安装到统一前缀（与 StableHLO 同前缀，即“启用 StableHLO 的 LLVM”工具链）
+ninja install
 ```
 
-设置环境变量：
+设置环境变量（使用**安装后的** bin 目录）：
 
 ```bash
-export PATH="$LLVM_HOME/build/bin:$PATH"
+export PATH="$LLVM_INSTALL_PREFIX/bin:$PATH"
 
 # 持久化到当前用户 shell（重开终端后仍生效）
-grep -q 'llvm-project/build/bin' ~/.bashrc || \
-  echo "export PATH=\"$LLVM_HOME/build/bin:\$PATH\"" >> ~/.bashrc
+grep -q "$LLVM_INSTALL_PREFIX/bin" ~/.bashrc || \
+  echo "export PATH=\"$LLVM_INSTALL_PREFIX/bin:\$PATH\"" >> ~/.bashrc
 source ~/.bashrc
 ```
+
+### 1.2.2 在同一前缀下构建并安装 StableHLO（形成统一工具链）
+
+使用 **torch-mlir 已拉取的 stablehlo**（与 1.1 一致、版本匹配），在 1.2.1 完成后，将 StableHLO **安装到与 LLVM 相同的前缀**，这样得到的就是“启用 StableHLO 的 LLVM”一套工具链。
+
+```bash
+# 与 1.2.1 相同的前缀（必须一致，否则不是“一套”工具链）
+# LLVM_BUILD_DIR 已在 1.2.1 中设为 torch-mlir/externals/llvm-project/build
+export STABLEHLO_INSTALL_PREFIX="${STABLEHLO_INSTALL_PREFIX:-$LLVM_INSTALL_PREFIX}"
+
+cd "$TORCH_MLIR_HOME/externals/stablehlo"
+rm -rf build && mkdir build && cd build
+
+cmake -G Ninja -S .. -B . \
+  -DMLIR_DIR="$LLVM_BUILD_DIR/lib/cmake/mlir" \
+  -DLLVM_DIR="$LLVM_BUILD_DIR/lib/cmake/llvm" \
+  -DCMAKE_INSTALL_PREFIX="$STABLEHLO_INSTALL_PREFIX" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DSTABLEHLO_ENABLE_BINDINGS_PYTHON=OFF
+
+ninja
+ninja install
+```
+
+**说明：为何头文件不会自动装到安装前缀**
+
+当前 **StableHLO 上游 CMake**（torch-mlir 使用的 `externals/stablehlo`）**没有配置头文件的 install 规则**：只对库目标做了安装，头文件与构建生成的 `.inc` 未包含在 `ninja install` 中。若希望头文件也在同一前缀下，需在 `ninja install` 后**手动拷贝**：
+
+```bash
+# 在 externals/stablehlo/build 目录下执行；前缀为 /usr/local 时加 sudo
+STABLEHLO_SRC="$TORCH_MLIR_HOME/externals/stablehlo"
+PREFIX="${STABLEHLO_INSTALL_PREFIX:-/usr/local}"
+mkdir -p "$PREFIX/include"
+cp -r "$STABLEHLO_SRC/stablehlo" "$PREFIX/include/"
+cp -r stablehlo/* "$PREFIX/include/stablehlo/" 2>/dev/null || true
+```
+
+安装完成后，**库**在 `$STABLEHLO_INSTALL_PREFIX/lib/`（如 `libStablehloOps.a`、`libStablehloBase.a`、`libStablehloRegister.a` 等），**头文件**在 `$PREFIX/include/stablehlo/`（若已执行上述拷贝）。此时 LLVM/MLIR 与 StableHLO 位于同一前缀，即 **启用 StableHLO 的 LLVM**。
+
+### 1.2.3 simple_compiler 使用该工具链
+
+配置 simple_compiler 时，指定 **安装后的** MLIR/LLVM（与 StableHLO 同前缀）：
+
+```bash
+cd simple_compiler/build
+cmake .. \
+  -DMLIR_DIR="$LLVM_INSTALL_PREFIX/lib/cmake/mlir" \
+  -DLLVM_DIR="$LLVM_INSTALL_PREFIX/lib/cmake/llvm"
+```
+
+若 StableHLO 已按 1.2.2 安装到同一前缀（如 `/usr/local`），gpu CMake 会在该前缀下自动找到头与库，**无需**再设 `STABLEHLO_INCLUDE_DIR` 或 `STABLEHLO_LIB_DIR`。若安装到自定义前缀，则加上：
+
+```bash
+-DSTABLEHLO_INCLUDE_DIR="$STABLEHLO_INSTALL_PREFIX/include" \
+-DSTABLEHLO_LIB_DIR="$STABLEHLO_INSTALL_PREFIX/lib"
+```
+
+**不推荐**：仅构建 LLVM 而不安装、或 StableHLO 安装到与 LLVM 不同的前缀，会导致需要单独指定多处路径，与本指南“启用 StableHLO 的 LLVM”统一工具链目标不一致。
 
 ---
 
 ## 1.3 编译 Torch-MLIR
 
+**重要**：配置 torch-mlir 时 **必须** 使用 LLVM 的 **构建目录**（`LLVM_BUILD_DIR`），不能使用安装目录（如 `/usr/local`）。lit 测试依赖的 `FileCheck`、`count`、`not` 等 target 仅存在于 LLVM 构建树中，使用安装目录会报错：`The dependency target "FileCheck" of target "check-torch-mlir" does not exist`。
+
 ```bash
-# 复用 1.1 中已设置的路径变量（若单独执行本节，请先设置这两个变量）
-export LLVM_BUILD_DIR="$LLVM_HOME/build"
+# 必须使用 LLVM 的构建目录（1.2.1 中 ninja 所在目录），不要用安装前缀 /usr/local
+export LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-$TORCH_MLIR_HOME/externals/llvm-project/build}"
 export TORCH_MLIR_BUILD_DIR="$TORCH_MLIR_HOME/build"
 
 # CPU/CUDA 通用：PyTorch wheel 通道，默认 cpu；CUDA 示例见 1.4
 export PYTORCH_CHANNEL="${PYTORCH_CHANNEL:-cpu}"
 
-# /opt 场景可直接复用：自动以仓库 owner 身份执行 git（避免 dubious ownership）
-run_git_as_owner() {
-  repo="$1"; shift
-  owner="$(stat -c '%U' "$repo")"
-  if [ "$(id -un)" = "$owner" ]; then
-    git -C "$repo" "$@"
-  else
-    sudo -u "$owner" git -C "$repo" "$@"
-  fi
-}
+# 1) 子模块已在 1.1 中 init（externals/llvm-project、externals/stablehlo），若需更新可再执行：
+#    git -C "$TORCH_MLIR_HOME" submodule update --init externals/llvm-project externals/stablehlo
 
-# 1) 对齐 torch-mlir 子模块（只拉必要 stablehlo）
-run_git_as_owner "$TORCH_MLIR_HOME" submodule update --init externals/stablehlo
-
-# 2) 校验 llvm-project 提交与 torch-mlir 期望一致
-if [ -f "$TORCH_MLIR_HOME/build_tools/llvm_version.txt" ]; then
-  LLVM_EXPECTED_COMMIT=$(cat "$TORCH_MLIR_HOME/build_tools/llvm_version.txt")
-else
-  LLVM_EXPECTED_COMMIT=$(run_git_as_owner "$TORCH_MLIR_HOME" ls-tree HEAD externals/llvm-project | awk '{print $3}')
-fi
-run_git_as_owner "$LLVM_HOME" fetch --all
-run_git_as_owner "$LLVM_HOME" checkout "$LLVM_EXPECTED_COMMIT"
-test "$(run_git_as_owner "$LLVM_HOME" rev-parse HEAD)" = "$LLVM_EXPECTED_COMMIT"
-
-# 3) 配置编译器
+# 2) 配置编译器
 command -v clang >/dev/null && command -v clang++ >/dev/null
 export CC=clang
 export CXX=clang++
 
-# 4) 确保 LLVM/MLIR 产物齐全（torch-mlir 链接依赖完整库）
+# 3) 确保 LLVM/MLIR 产物齐全（torch-mlir 链接依赖完整库；1.2.1 已在该目录构建并安装）
 test -f "$LLVM_BUILD_DIR/lib/cmake/mlir/MLIRConfig.cmake"
 ninja -C "$LLVM_BUILD_DIR"
 ninja -C "$LLVM_BUILD_DIR" mlir-tblgen mlir-python-sources
 
-# 5) 重配并编译 torch-mlir
+# 4) 重配并编译 torch-mlir（MLIR_DIR/LLVM_DIR 必须指向构建目录，不能指向 /usr/local）
 rm -rf "$TORCH_MLIR_BUILD_DIR"
 cmake -G Ninja -S "$TORCH_MLIR_HOME" -B "$TORCH_MLIR_BUILD_DIR" \
   -DCMAKE_C_COMPILER="$CC" \
@@ -171,13 +210,13 @@ cmake -G Ninja -S "$TORCH_MLIR_HOME" -B "$TORCH_MLIR_BUILD_DIR" \
 ninja -C "$TORCH_MLIR_BUILD_DIR"
 ninja -C "$TORCH_MLIR_BUILD_DIR" TorchMLIRPythonModules
 
-# 6) 安装 Python 依赖（默认 CPU-only）
+# 5) 安装 Python 依赖（默认 CPU-only）
 python -m pip install -U pip
 python -m pip uninstall -y torch torchvision torchaudio
 python -m pip install --index-url "https://download.pytorch.org/whl/${PYTORCH_CHANNEL}" torch torchvision torchaudio
 python -m pip install numpy
 
-# 7) 统一设置 PYTHONPATH
+# 6) 统一设置 PYTHONPATH
 set_torch_mlir_pythonpath() {
   local root="$1"
   local paths=(
@@ -197,6 +236,14 @@ python -c "import torch_mlir._mlir_libs._jit_ir_importer as m; print('jit_ir_imp
 grep -q 'torch-mlir/build/python_packages/torch_mlir' ~/.bashrc || \
   echo "export PYTHONPATH=\"$TORCH_MLIR_HOME/python:$TORCH_MLIR_HOME/projects/pt1/python:$TORCH_MLIR_HOME/build/python_packages/torch_mlir:$TORCH_MLIR_HOME/build/tools/torch-mlir/python_packages/torch_mlir:\$PYTHONPATH\"" >> ~/.bashrc
 source ~/.bashrc
+```
+
+**若出现 `The dependency target "FileCheck"/"count"/"not" of target "check-torch-mlir" does not exist`**：说明当前用的是 LLVM **安装目录**（如 `/usr/local`）作为 `MLIR_DIR`/`LLVM_DIR`。应改用 LLVM **构建目录**（即 1.2.1 中执行 `ninja` 的目录，例如 `$TORCH_MLIR_HOME/externals/llvm-project/build`），然后删掉 torch-mlir 的 build 再重新配置并编译：
+
+```bash
+export LLVM_BUILD_DIR="$TORCH_MLIR_HOME/externals/llvm-project/build"
+rm -rf "$TORCH_MLIR_HOME/build"
+# 再执行上面 4) 的 cmake 与 ninja 命令
 ```
 
 ## 1.4 CUDA 版本支持（可选）
@@ -238,7 +285,7 @@ Your installed Caffe2 version uses CUDA but I cannot find the CUDA libraries
 
 ---
 
-# 2️⃣ PyTorch 前端：导出 matmul
+# 2️⃣ PyTorch 前端：导出 matmul (User)
 
 ## matmul.py
 
@@ -267,7 +314,6 @@ print(module)
 运行：
 
 ```bash
-set_torch_mlir_pythonpath "$HOME/mlir-matmul/torch-mlir"
 python matmul.py > matmul.mlir
 
 # 生成 Python baseline（golden_ref.txt）
@@ -399,7 +445,7 @@ test -f /opt/riscv/lib/gcc/riscv64-unknown-linux-gnu/*/libgcc.a || \
   test -f /opt/riscv/lib/gcc/riscv64-unknown-linux-gnu/*/libgcc_s.so
 
 # 4) 用 sysroot 链接可执行文件
-cd ~/simple_compiler/src/mlir/python
+cd ~/simple_compiler/src/mlir/cpu
 clang --target=riscv64-unknown-linux-gnu \
   --gcc-toolchain=/opt/riscv \
   --sysroot=/opt/riscv/sysroot \

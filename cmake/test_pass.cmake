@@ -1,5 +1,5 @@
-# 运行 SimplePass 并校验输出 IR（用于 add_test Pass_SimplePass）
-# 用法: cmake -DBINARY_DIR=/path/to/build -DSOURCE_DIR=/path/to/source -P test_pass.cmake
+# 运行 SimplePass 并校验输出 IR（用于 add_test Pass_SimplePass） 用法: cmake
+# -DBINARY_DIR=/path/to/build -DSOURCE_DIR=/path/to/source -P test_pass.cmake
 
 if(NOT BINARY_DIR OR NOT SOURCE_DIR)
   message(FATAL_ERROR "BINARY_DIR and SOURCE_DIR required")

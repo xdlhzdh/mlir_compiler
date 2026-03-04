@@ -1,0 +1,9 @@
+#!/bin/sh
+# Wrapper to run mlir-opt with pass-pipeline that contains parentheses (must be one argument).
+# Usage: run_mlir_opt.sh <mlir-opt> <input.mlir> <output.mlir>
+set -e
+exec "$1" "$2" \
+  --load-dialect-plugin=./libDialectPass.so \
+  --load-pass-plugin=./libDialectPass.so \
+  '--pass-pipeline=builtin.module(func.func(conv-bn-fusion))' \
+  -o "$3"

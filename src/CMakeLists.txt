@@ -1,6 +1,12 @@
-# src: ast 与 pass 子目录；ast 提供解释器/LLVM IR 可执行，pass 提供 opt 插件
+# src: ast、pass 与可选的 mlir/gpu（Conv+BN fusion 等）子目录
 
 add_subdirectory(ast)
+
+# MLIR GPU：Conv+BN fusion 等，需 find_package(MLIR) 且 PATH 中有 mlir-opt、python 中有 torch_mlir
+find_package(MLIR QUIET CONFIG)
+if(MLIR_FOUND)
+  add_subdirectory(mlir/gpu)
+endif()
 
 if(LLVM_CONFIG)
   add_subdirectory(pass)

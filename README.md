@@ -13,11 +13,11 @@ cmake --build .
 ## 用法
 
 以下命令均在 **build 目录** 下执行（或使用 `cmake --build build --target <target>` 从项目根目录执行）。  
-支持：**run / run_ast / run_pass**、**run_simple_pass / run_remove_trivial_block / run_remove_trivial_loop / run_remove_zero_trip_loop**、**run DOMAIN=ast|pass**、**run DOMAIN=pass PASS=xxx**、**test**（全量）、**run_tests DOMAIN=ast|pass**、**test_ast / test_pass**。**不支持 make check**、**make pass**。
+支持：**run / run_ast / run_pass / run_mlir**、**run DOMAIN=ast|pass|mlir**、**run DOMAIN=mlir PASS=conv_bn_fusion**、**test**（全量）、**run_tests DOMAIN=ast|pass**、**test_ast / test_pass**。**不支持 make check**、**make pass**。
 
 ### 运行（run）
 
-仅支持 **DOMAIN=ast** 与 **DOMAIN=pass**；不带参数时跑全部（ast + pass，有 LLVM 时含 pass）。
+支持 **DOMAIN=ast**、**DOMAIN=pass**、**DOMAIN=mlir**；不带参数时跑全部（ast + pass，有 LLVM 时含 pass；不含 mlir）。
 
 | 命令 | 说明 |
 |------|------|
@@ -28,15 +28,19 @@ cmake --build .
 | `make run DOMAIN=pass PASS=remove_trivial_block` | 只运行 remove_trivial_block |
 | `make run DOMAIN=pass PASS=remove_trivial_loop` | 只运行 remove_trivial_loop |
 | `make run DOMAIN=pass PASS=remove_zero_trip_loop` | 只运行 remove_zero_trip_loop |
+| `make run DOMAIN=mlir PASS=conv_bn_fusion` | 只运行 MLIR conv_bn_fusion（conv_bn_model.py → conv_bn_model.mlir，mlir-opt → conv_bn_fusion.mlir） |
 | `make run_ast` | 等价于 `make run DOMAIN=ast` |
 | `make run_pass` | 等价于 `make run DOMAIN=pass`（需 LLVM，跑全部 pass） |
+| `make run_mlir` | 等价于 `make run DOMAIN=mlir`（需 MLIR，跑全部 MLIR 目标，当前即 conv_bn_optimized） |
 | `make run_simple_pass` | 只跑 SimplePass 插件（my-peephole, my-cfg） |
 | `make run_remove_trivial_block` | 只跑 RemoveTrivialBlockPass |
 | `make run_remove_trivial_loop` | 只跑 RemoveTrivialLoopPass |
 | `make run_remove_zero_trip_loop` | 只跑 RemoveZeroTripLoopPass |
 | `cmake --build build --target run` | 从项目根目录运行全部 |
 | `cmake --build build --target run -- DOMAIN=pass PASS=xxx` | 从项目根目录只运行指定 pass（**注意 `--` 后传 DOMAIN/PASS**） |
+| `cmake --build build --target run -- DOMAIN=mlir PASS=conv_bn_fusion` | 从项目根目录只运行 conv_bn_fusion |
 | `cmake --build build --target run_simple_pass` | 从项目根目录只运行 SimplePass |
+| `cmake --build build --target run_mlir` | 从项目根目录只运行 MLIR 目标 |
 | `cmake --build build --target run_remove_trivial_block` | 从项目根目录只运行 RemoveTrivialBlockPass |
 | `cmake --build build --target run_remove_trivial_loop` | 从项目根目录只运行 RemoveTrivialLoopPass |
 | `cmake --build build --target run_remove_zero_trip_loop` | 从项目根目录只运行 RemoveZeroTripLoopPass |
@@ -83,8 +87,19 @@ opt -load-pass-plugin=build/src/pass/SimplePass.so -passes="my-peephole,my-cfg" 
 
 推荐在 build 目录下使用：`make run DOMAIN=pass` 或 `make run_pass` 跑 pass。
 
+### MLIR GPU（conv_bn_fusion 等，需 find_package(MLIR)）
+
+在检测到 **MLIR**（`find_package(MLIR CONFIG)` 成功）时，会构建 `src/mlir/gpu/` 下的 **MyPass** 插件（`libDialectPass.so`）和 **conv_bn_optimized** 目标：先调用 **conv_bn_model.py** 生成 `conv_bn_model.mlir`，再用 **mlir-opt** 加载插件执行 `--conv-bn-fusion`，输出 `conv_bn_fusion.mlir`。需安装 **torch-mlir** 且 `PYTHONPATH` 可用，以及 **mlir-opt**（CMake 会优先使用与 `MLIR_DIR` 同构建的 `mlir-opt`）。  
+**推荐**：使用 **启用 StableHLO 的 LLVM**（参见《MLIR端到端实战指南(CPU)》1.2 节），即在同一安装前缀下安装 LLVM/MLIR 与 StableHLO，或使用已将 StableHLO 纳入构建的 LLVM 源码树；不推荐“单独 LLVM-project + 单独安装 StableHLO”的方式。若 mlir-opt 未启用 StableHLO，运行 `conv_bn_optimized` 可能报错 `Dialect 'stablehlo' not found`，此时本仓库的插件会通过 `--load-dialect-plugin` 注册 StablehloDialect，仍可运行。
+
+| 命令 | 说明 |
+|------|------|
+| `make run DOMAIN=mlir PASS=conv_bn_fusion` | 运行 conv_bn_fusion 全流程（conv_bn_model.py -o conv_bn_model.mlir，mlir-opt conv_bn_model.mlir ... -o conv_bn_fusion.mlir） |
+| `make run_mlir` | 运行全部 MLIR 目标（当前即 conv_bn_optimized） |
+| `cmake --build build --target conv_bn_optimized` | 仅执行 conv_bn_fusion 流程，生成 `build/src/mlir/gpu/conv_bn_model.mlir` 与 `conv_bn_fusion.mlir` |
+
 ### 小结
 
-- **run**：`make run` 跑全部；`make run_ast` / `make run_pass` 只跑对应域；`make run DOMAIN=pass PASS=xxx` 或 `make run_xxx` 只跑单个 pass（`xxx` 可为 `simple_pass`、`remove_trivial_block`、`remove_trivial_loop`、`remove_zero_trip_loop`）。
+- **run**：`make run` 跑全部；`make run_ast` / `make run_pass` / `make run_mlir` 只跑对应域；`make run DOMAIN=pass PASS=xxx` 或 `make run_xxx` 只跑单个 pass；`make run DOMAIN=mlir PASS=conv_bn_fusion` 跑 MLIR conv_bn_fusion。
 - **test**：`make test` 跑全部，`make run_tests DOMAIN=ast|pass` 或 `make test_ast` / `make test_pass` 只跑对应域。
 - 用 `cmake --build` 并要传 **DOMAIN** 时，写法为：`cmake --build build --target run -- DOMAIN=ast`（`--` 与参数之间用空格）。
