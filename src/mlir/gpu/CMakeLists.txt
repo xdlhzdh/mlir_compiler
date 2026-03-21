@@ -1,3 +1,12 @@
+# =============================================================================
+# src/mlir/gpu — 与本仓库 MLIR CMake 集成的唯一子目录（见 ../README.md）
+#
+# - mlir/cpu：无 CMakeLists，仅示例 .mlir / 脚本 / 文档驱动流水线，不 add_subdirectory。
+# - 本文件：在 find_package(MLIR) 成功时由 src/CMakeLists.txt 引入；构建 DialectPass
+#   插件与 conv_bn_optimized（Python 导出 StableHLO + mlir-opt --conv-bn-fusion）。
+# - 「gpu」表示目录用途/后续 GPU 相关实验，不表示本 target 会编译 CUDA kernel。
+# =============================================================================
+
 find_package(MLIR REQUIRED CONFIG)
 find_package(LLVM CONFIG REQUIRED)
 

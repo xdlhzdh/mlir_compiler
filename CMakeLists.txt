@@ -88,8 +88,8 @@ if(LLVM_CONFIG)
     COMMENT "Run pass only")
 endif()
 
-# MLIR：需 find_package(MLIR) 成功时才有 conv_bn_optimized 等目标；无 MLIR 时 make run_mlir
-# 会报错
+# MLIR run_mlir / DOMAIN=mlir：仅驱动 src/mlir/gpu 下目标（如 conv_bn_optimized）。
+# mlir/cpu 无 CMake 目标，见 src/mlir/README.md。无 MLIR 时 make run_mlir 会失败。
 add_custom_target(
   run_mlir
   COMMAND ${CMAKE_COMMAND} -DDOMAIN=mlir -DBINARY_DIR=${CMAKE_BINARY_DIR} -P

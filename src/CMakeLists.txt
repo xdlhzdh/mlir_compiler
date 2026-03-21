@@ -1,8 +1,11 @@
 # src: ast、pass 与可选的 mlir/gpu（Conv+BN fusion 等）子目录
+#
+# MLIR 说明（详见 src/mlir/README.md）：
+#   - mlir/gpu — 仅此目录参与 CMake：MLIR 找到则 add_subdirectory(mlir/gpu)。
+#   - mlir/cpu — 无 CMakeLists，仅为 Linalg/LLVM 等手工流水线与示例 IR，不构建。
 
 add_subdirectory(ast)
 
-# MLIR GPU：Conv+BN fusion 等，需 find_package(MLIR) 且 PATH 中有 mlir-opt、python 中有 torch_mlir
 find_package(MLIR QUIET CONFIG)
 if(MLIR_FOUND)
   add_subdirectory(mlir/gpu)

@@ -1,6 +1,6 @@
 # MLIR Compiler
 
-当前阶段主要介绍基于LLVM的普通编译器的实现，包含多版解释器（V1–V4）、ANTLR 解析、NFA/DFA 与 LLVM IR 生成、Pass优化等。后续将逐步补充 MLIR 相关内容。
+当前仓库同时包含两条主线：一条是基于 LLVM 的普通编译器实现与 Pass 优化，包含多版解释器（V1–V4）、ANTLR 解析、NFA/DFA、LLVM IR 生成等；另一条是 MLIR 相关实验，当前分为 **`src/mlir/cpu/`** 的手工 lowering 流水线与 **`src/mlir/gpu/`** 的 StableHLO 图级 Pass 示例。
 
 ## 构建
 
@@ -87,10 +87,20 @@ opt -load-pass-plugin=build/src/pass/SimplePass.so -passes="my-peephole,my-cfg" 
 
 推荐在 build 目录下使用：`make run DOMAIN=pass` 或 `make run_pass` 跑 pass。
 
+### MLIR：`cpu/` 与 `gpu/`（先看这一节）
+
+| 路径 | 是否被本仓库 CMake 构建 | 内容 |
+|------|-------------------------|------|
+| **`src/mlir/cpu/`** | **否**（无 `CMakeLists.txt`） | **CPU/RISC-V 等执行栈**：**Linalg 起 → LLVM 后端**的手工流水线；见 [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) |
+| **`src/mlir/gpu/`** | **是**（需 `find_package(MLIR)` 成功） | **AI 编译 L1 图级**（StableHLO Pass、Conv+BN 融合等）；`conv_bn_model.py` + `mlir-opt`；分层说明见 [`src/mlir/README.md`](src/mlir/README.md) |
+
+- **区分方式**：根目录 **`cmake ..` 只会 `add_subdirectory(mlir/gpu)`**；`mlir/cpu` **不会**生成任何 target。跑 cpu 流水线前先在 **[`src/mlir/cpu/README.md`](src/mlir/cpu/README.md)** 完成**环境准备**，再在 `src/mlir/cpu` 下按该文档**第二节**执行命令（或只阅读仓库内示例 `.mlir`）。
+- **目录关系**（`run_mlir` 只对应 gpu 等）：**[`src/mlir/README.md`](src/mlir/README.md)**。
+
 ### MLIR GPU（conv_bn_fusion 等，需 find_package(MLIR)）
 
-在检测到 **MLIR**（`find_package(MLIR CONFIG)` 成功）时，会构建 `src/mlir/gpu/` 下的 **MyPass** 插件（`libDialectPass.so`）和 **conv_bn_optimized** 目标：先调用 **conv_bn_model.py** 生成 `conv_bn_model.mlir`，再用 **mlir-opt** 加载插件执行 `--conv-bn-fusion`，输出 `conv_bn_fusion.mlir`。需安装 **torch-mlir** 且 `PYTHONPATH` 可用，以及 **mlir-opt**（CMake 会优先使用与 `MLIR_DIR` 同构建的 `mlir-opt`）。  
-**推荐**：使用 **启用 StableHLO 的 LLVM**（参见《MLIR端到端实战指南(CPU)》1.2 节），即在同一安装前缀下安装 LLVM/MLIR 与 StableHLO，或使用已将 StableHLO 纳入构建的 LLVM 源码树；不推荐“单独 LLVM-project + 单独安装 StableHLO”的方式。若 mlir-opt 未启用 StableHLO，运行 `conv_bn_optimized` 可能报错 `Dialect 'stablehlo' not found`，此时本仓库的插件会通过 `--load-dialect-plugin` 注册 StablehloDialect，仍可运行。
+在检测到 **MLIR**（`find_package(MLIR CONFIG)` 成功）时，会构建 **`src/mlir/gpu/`**（不是 `cpu/`）下的 **DialectPass** 插件（如 `libDialectPass.so`）和 **conv_bn_optimized** 目标：先调用 **conv_bn_model.py** 生成 `conv_bn_model.mlir`，再用 **mlir-opt** 加载插件执行 `--conv-bn-fusion`，输出 `conv_bn_fusion.mlir`。需安装 **torch-mlir** 且 `PYTHONPATH` 可用，以及 **mlir-opt**（CMake 会优先使用与 `MLIR_DIR` 同构建的 `mlir-opt`）。  
+**推荐**：使用 **启用 StableHLO 的 LLVM**（环境与安装步骤见 **[`src/mlir/cpu/README.md` 第一节](src/mlir/cpu/README.md)** 的 1.3–1.4），即在同一安装前缀下安装 LLVM/MLIR 与 StableHLO；不推荐“单独 LLVM-project + 单独安装 StableHLO”。若 mlir-opt 未启用 StableHLO，运行 `conv_bn_optimized` 可能报错 `Dialect 'stablehlo' not found`，此时本仓库的插件会通过 `--load-dialect-plugin` 注册 StablehloDialect，仍可运行。
 
 | 命令 | 说明 |
 |------|------|
@@ -101,5 +111,6 @@ opt -load-pass-plugin=build/src/pass/SimplePass.so -passes="my-peephole,my-cfg" 
 ### 小结
 
 - **run**：`make run` 跑全部；`make run_ast` / `make run_pass` / `make run_mlir` 只跑对应域；`make run DOMAIN=pass PASS=xxx` 或 `make run_xxx` 只跑单个 pass；`make run DOMAIN=mlir PASS=conv_bn_fusion` 跑 MLIR conv_bn_fusion。
+- **MLIR**：`make run_mlir` / `DOMAIN=mlir` **只**驱动 **`src/mlir/gpu`**；**`src/mlir/cpu`** 手工流水线见 **`src/mlir/cpu/README.md`**（环境与运行分开写）；目录对比见 **`src/mlir/README.md`**。
 - **test**：`make test` 跑全部，`make run_tests DOMAIN=ast|pass` 或 `make test_ast` / `make test_pass` 只跑对应域。
 - 用 `cmake --build` 并要传 **DOMAIN** 时，写法为：`cmake --build build --target run -- DOMAIN=ast`（`--` 与参数之间用空格）。

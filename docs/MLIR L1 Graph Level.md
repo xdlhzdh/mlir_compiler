@@ -341,4 +341,4 @@ StableHLO 通过 MLIR 的 **SideEffectOpInterface** 等机制标注；多数元�
 - [StableHLO Specification](https://github.com/openxla/stablehlo/blob/main/docs/spec.md)（规范正文）
 - [Dynamism in StableHLO](https://openxla.org/stablehlo/dynamism)（动态 shape、refinement pipeline）
 - [StableHLO Specification Checklist](https://openxla.org/stablehlo/spec_checklist)（各 op 的 spec/verification/interpreter 状态）
-- 本仓库《MLIR端到端实战指南(CPU).md》中关于 StableHLO 构建与工具链的说明
+- 本仓库 **[`src/mlir/cpu/README.md`](../src/mlir/cpu/README.md)** 第一节（环境准备）中关于 StableHLO / LLVM 工具链的说明
