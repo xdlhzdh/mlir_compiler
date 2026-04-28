@@ -192,15 +192,21 @@ PreservedAnalyses RemoveZeroTripLoopPass::run(Function &F,
     //   改写后: %entry ──────────────────> %exit
     //           （%loop 和 %body 变为不可达，由步骤 C 删除）
     //
+    SmallVector<DominatorTree::UpdateType, 4> CFGUpdates;
     for (BasicBlock *Pred : OutsidePreds) {
       Instruction *TI = Pred->getTerminator();
       for (unsigned i = 0; i < TI->getNumSuccessors(); ++i) {
         if (TI->getSuccessor(i) == Header) {
           TI->setSuccessor(i, Exit);
+          // 通知 DTU：CFG 已发生 Pred->Header 删除 与 Pred->Exit 插入。
+          // 不同步告知会导致后续 DT 节点删除时违反"必须为叶子节点"不变量。
+          CFGUpdates.push_back({DominatorTree::Insert, Pred, Exit});
+          CFGUpdates.push_back({DominatorTree::Delete, Pred, Header});
           break;
         }
       }
     }
+    DTU.applyUpdates(CFGUpdates);
 
     // ------------------------------------------------------------------
     // 步骤 C-1：修复 Exit 的 PHI 节点
@@ -227,9 +233,9 @@ PreservedAnalyses RemoveZeroTripLoopPass::run(Function &F,
     // ------------------------------------------------------------------
     // 步骤 C-2：删除不可达的循环块
     // ------------------------------------------------------------------
-    // DTU.flush() 将所有延迟的支配树更新一次性应用。
-    // removeUnreachableBlocks() 删除从 Entry 不可达的块（即原循环的
-    // Header/Body/Latch）。
+    // 此时 CFG 中 Header/Body 等已变为不可达。先 flush 把 CFGUpdates
+    // 应用到 DT，让 DT 进入与当前 CFG 一致的状态；然后 removeUnreachableBlocks
+    // 会通过 DTU 安全地按支配序删除节点（先删叶子）。
     DTU.flush();
     removeUnreachableBlocks(F, &DTU);
     Changed = true;

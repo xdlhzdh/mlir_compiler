@@ -35,7 +35,7 @@ if(LLVM_CONFIG)
   target_include_directories(test_simple_pass PRIVATE ${PROJECT_SOURCE_DIR}/include)
   set_target_properties(test_simple_pass PROPERTIES COMPILE_FLAGS "${LLVM_CXXFLAGS}")
   target_link_libraries(test_simple_pass GTest::gtest GTest::gtest_main SimplePassLib
-    ${LLVM_LDFLAGS} ${LLVM_LIBS_CORE} pthread)
+    ${LLVM_LDFLAGS} ${LLVM_LIBS_CORE_ASM} ${LLVM_SYSTEM_LIBS} pthread)
   add_test(NAME Pass_SimplePass_Src COMMAND test_simple_pass)
   set_tests_properties(Pass_SimplePass_Src PROPERTIES LABELS "pass")
 endif()

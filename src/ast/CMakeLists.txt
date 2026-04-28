@@ -18,11 +18,11 @@ if(LLVM_CONFIG)
 
   add_executable(run_simple_llvm_ir_jit run_simple_llvm_ir_jit.cpp)
   set_target_properties(run_simple_llvm_ir_jit PROPERTIES COMPILE_FLAGS "${LLVM_CXXFLAGS}")
-  target_link_libraries(run_simple_llvm_ir_jit ${LLVM_LDFLAGS} ${LLVM_LIBS_JIT})
+  target_link_libraries(run_simple_llvm_ir_jit ${LLVM_LDFLAGS} ${LLVM_LIBS_JIT} ${LLVM_SYSTEM_LIBS})
 
   add_executable(run_interpreter_v4_llvm run_interpreter_v4_llvm.cpp)
   set_target_properties(run_interpreter_v4_llvm PROPERTIES COMPILE_FLAGS
-    "${LLVM_CXXFLAGS} -DUSE_LLVM_CODEGEN -fexceptions")
+    "${LLVM_CXXFLAGS} -DUSE_LLVM_CODEGEN -fexceptions -frtti")
   target_link_libraries(run_interpreter_v4_llvm ${LLVM_LDFLAGS} ${LLVM_LIBS_CORE})
 
   set(OUTPUT_LL_DIR ${PROJECT_SOURCE_DIR}/output)
