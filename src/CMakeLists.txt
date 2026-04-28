@@ -1,15 +1,14 @@
-# src: ast、pass 与可选的 mlir/gpu（Conv+BN fusion 等）子目录
+# src: ast、pass 与可选的 mlir/gpu 子目录
 #
 # MLIR 说明（详见 src/mlir/README.md）：
-#   - mlir/gpu — 仅此目录参与 CMake：MLIR 找到则 add_subdirectory(mlir/gpu)。
+#   - mlir/gpu — 唯一参与 CMake 的 MLIR 子目录，内含 P1~P3 图级练习 + StableHLO pass。
 #   - mlir/cpu — 无 CMakeLists，仅为 Linalg/LLVM 等手工流水线与示例 IR，不构建。
 
 add_subdirectory(ast)
 
-find_package(MLIR QUIET CONFIG)
-if(MLIR_FOUND)
-  add_subdirectory(mlir/gpu)
-endif()
+# mlir/gpu: P1~P3 需要 Protobuf; StableHLO pass 需要 MLIR。
+# CMakeLists.txt 内部按条件分别启用，这里无条件 add_subdirectory。
+add_subdirectory(mlir/gpu)
 
 if(LLVM_CONFIG)
   add_subdirectory(pass)

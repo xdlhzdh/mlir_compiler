@@ -1,4 +1,5 @@
 import warnings
+from pathlib import Path
 
 import onnxruntime as ort
 import numpy as np
@@ -24,7 +25,8 @@ def main() -> None:
     model = Model()
     model.eval()
     x = torch.randn(1, 3)
-    onnx_path = "../../../../build/model.onnx"
+    base_dir = Path(__file__).resolve().parent
+    onnx_path = (base_dir / "../../../../build/model.onnx").resolve()
 
     _print_block(
         "1) 导出 ONNX",

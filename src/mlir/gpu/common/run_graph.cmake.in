@@ -1,0 +1,40 @@
+# run_graph.cmake — Run full L1 Graph Level pipeline
+# Variables set by parent CMake: RUN_ONNX_PARSE, RUN_ONNX_TO_IR, RUN_GRAPH_REWRITE, MODEL_DIR
+
+macro(banner title)
+  message(STATUS "")
+  message(STATUS "======================================")
+  message(STATUS "  ${title}")
+  message(STATUS "======================================")
+endmacro()
+
+macro(run_exe exe model)
+  execute_process(COMMAND ${exe} ${model} RESULT_VARIABLE rv)
+  if(rv)
+    message(FATAL_ERROR "${exe} failed on ${model} with exit code ${rv}")
+  endif()
+endmacro()
+
+banner("P1: ONNX Parse - add_matmul.onnx")
+run_exe(${RUN_ONNX_PARSE} "${MODEL_DIR}/add_matmul.onnx")
+
+banner("P1: ONNX Parse - conv_bn.onnx")
+run_exe(${RUN_ONNX_PARSE} "${MODEL_DIR}/conv_bn.onnx")
+
+banner("P2: ONNX to IR - add_matmul.onnx")
+run_exe(${RUN_ONNX_TO_IR} "${MODEL_DIR}/add_matmul.onnx")
+
+banner("P2: ONNX to IR - conv_bn.onnx")
+run_exe(${RUN_ONNX_TO_IR} "${MODEL_DIR}/conv_bn.onnx")
+
+banner("P3: Graph Rewrite - conv_bn.onnx")
+run_exe(${RUN_GRAPH_REWRITE} "${MODEL_DIR}/conv_bn.onnx")
+
+banner("P3: Graph Rewrite - transpose.onnx")
+run_exe(${RUN_GRAPH_REWRITE} "${MODEL_DIR}/transpose.onnx")
+
+banner("P3: Graph Rewrite - const_fold.onnx")
+run_exe(${RUN_GRAPH_REWRITE} "${MODEL_DIR}/const_fold.onnx")
+
+message(STATUS "")
+message(STATUS "All P1/P2/P3 exercises completed successfully.")

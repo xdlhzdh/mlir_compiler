@@ -1,116 +1,429 @@
 # MLIR Compiler
 
-当前仓库同时包含两条主线：一条是基于 LLVM 的普通编译器实现与 Pass 优化，包含多版解释器（V1–V4）、ANTLR 解析、NFA/DFA、LLVM IR 生成等；另一条是 MLIR 相关实验，当前分为 **`src/mlir/cpu/`** 的手工 lowering 流水线与 **`src/mlir/gpu/`** 的 StableHLO 图级 Pass 示例。
+本仓库包含两条主线：
+
+1. **传统编译器实现**：基于 LLVM 的多版解释器（V1–V4）、ANTLR 解析、NFA/DFA、LLVM IR 生成与 Pass 优化
+2. **AI 编译器全流程**：基于 MLIR 的 15 阶段 pipeline，从 ONNX 模型解析到 GPU 代码生成，覆盖工业级 AI 编译器核心技术栈
+
+```
+src/
+├── mlir/
+│   ├── cpu/    # CPU/RISC-V 手工 lowering 流水线（独立构建，见 cpu/README.md）
+│   └── gpu/    # AI 编译器 15 阶段全流程（本仓库 CMake 构建）
+├── pass/       # LLVM Pass 插件（SimplePass 等）
+└── ...         # 解释器 V1-V4、ANTLR、NFA/DFA
+```
+
+---
 
 ## 构建
+
+### 基础构建（纯 C++ 阶段，无外部依赖）
 
 ```bash
 mkdir build && cd build
 cmake ..
-cmake --build .
+cmake --build . -j$(nproc)
 ```
 
-## 用法
+这会构建 **Stage 7–15**（纯 C++17，无外部依赖）。
 
-以下命令均在 **build 目录** 下执行（或使用 `cmake --build build --target <target>` 从项目根目录执行）。  
-支持：**run / run_ast / run_pass / run_mlir**、**run DOMAIN=ast|pass|mlir**、**run DOMAIN=mlir PASS=conv_bn_fusion**、**test**（全量）、**run_tests DOMAIN=ast|pass**、**test_ast / test_pass**。**不支持 make check**、**make pass**。
+### 完整构建（含 ONNX 解析与 MLIR Pass）
 
-### 运行（run）
+| 可选依赖 | 启用的阶段 | 安装方式 |
+|---------|-----------|---------|
+| **Protobuf** | Stage 1–3（ONNX 解析/Lowering/图优化）、Stage 5（ONNX→StableHLO） | `sudo dnf install protobuf-devel` |
+| **MLIR + StableHLO** | Stage 6（真实 MLIR Pass 插件 + mlir-opt） | 见 `src/mlir/cpu/README.md` 1.2 节 |
+| **LLVM** | LLVM Pass 插件（SimplePass 等） | `llvm-config` 可用即可 |
+| **Python + PyTorch + torch-mlir** | Stage 4（PyTorch → StableHLO 导出） | `pip install torch torch-mlir` |
 
-支持 **DOMAIN=ast**、**DOMAIN=pass**、**DOMAIN=mlir**；不带参数时跑全部（ast + pass，有 LLVM 时含 pass；不含 mlir）。
+---
 
-| 命令 | 说明 |
-|------|------|
-| `make run` | 运行全部（ast 可执行文件 + pass 目标，有 LLVM 时） |
-| `make run DOMAIN=ast` | 只运行 ast（interpreter v1..v4、antlr、nfa_dfa） |
-| `make run DOMAIN=pass` | 只运行 pass（所有 plugin 的 pass） |
-| `make run DOMAIN=pass PASS=simple_pass` | 只运行 simple_pass 插件 |
-| `make run DOMAIN=pass PASS=remove_trivial_block` | 只运行 remove_trivial_block |
-| `make run DOMAIN=pass PASS=remove_trivial_loop` | 只运行 remove_trivial_loop |
-| `make run DOMAIN=pass PASS=remove_zero_trip_loop` | 只运行 remove_zero_trip_loop |
-| `make run DOMAIN=mlir PASS=conv_bn_fusion` | 只运行 MLIR conv_bn_fusion（conv_bn_model.py → conv_bn_model.mlir，mlir-opt → conv_bn_fusion.mlir） |
-| `make run_ast` | 等价于 `make run DOMAIN=ast` |
-| `make run_pass` | 等价于 `make run DOMAIN=pass`（需 LLVM，跑全部 pass） |
-| `make run_mlir` | 等价于 `make run DOMAIN=mlir`（需 MLIR，跑全部 MLIR 目标，当前即 conv_bn_optimized） |
-| `make run_simple_pass` | 只跑 SimplePass 插件（my-peephole, my-cfg） |
-| `make run_remove_trivial_block` | 只跑 RemoveTrivialBlockPass |
-| `make run_remove_trivial_loop` | 只跑 RemoveTrivialLoopPass |
-| `make run_remove_zero_trip_loop` | 只跑 RemoveZeroTripLoopPass |
-| `cmake --build build --target run` | 从项目根目录运行全部 |
-| `cmake --build build --target run -- DOMAIN=pass PASS=xxx` | 从项目根目录只运行指定 pass（**注意 `--` 后传 DOMAIN/PASS**） |
-| `cmake --build build --target run -- DOMAIN=mlir PASS=conv_bn_fusion` | 从项目根目录只运行 conv_bn_fusion |
-| `cmake --build build --target run_simple_pass` | 从项目根目录只运行 SimplePass |
-| `cmake --build build --target run_mlir` | 从项目根目录只运行 MLIR 目标 |
-| `cmake --build build --target run_remove_trivial_block` | 从项目根目录只运行 RemoveTrivialBlockPass |
-| `cmake --build build --target run_remove_trivial_loop` | 从项目根目录只运行 RemoveTrivialLoopPass |
-| `cmake --build build --target run_remove_zero_trip_loop` | 从项目根目录只运行 RemoveZeroTripLoopPass |
+## AI 编译器 Pipeline 总览（`src/mlir/gpu/`）
 
-### 测试（test）
+完整的 15 阶段 pipeline，从模型输入到机器码/GPU 代码输出：
 
-仅支持 **DOMAIN=ast** 与 **DOMAIN=pass**；不带参数时跑全部测试。**不支持 make check**。  
-首次执行 **make run** 或 **make patch_test_domain** 后，`make test DOMAIN=ast|pass` 可生效（通过 `ctest_wrapper.sh` 修补 test 目标）。
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Stage 1-3: 前端 (需 Protobuf)                                              │
+│  ONNX 解析 → 自定义 IR Lowering → 图级优化 (Conv+BN Fusion, 常量折叠)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Stage 4-6: Dialect Lowering                                                │
+│  PyTorch→StableHLO (Python) → ONNX→StableHLO (3级) → MLIR Pass 插件         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Stage 7-9: 高级优化 (纯 C++)                                                │
+│  StableHLO 6-Stage 优化 → Linalg Tiling & Fusion → One-Shot Bufferization   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Stage 10-12: 后端 (纯 C++)                                                  │
+│  SCF/Affine 循环优化 → Vector 向量化 → LLVM Backend (ISel/RegAlloc/Sched)     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Stage 13-15: GPU & 部署优化 (纯 C++)                                         │
+│  GPU Codegen (NVVM/PTX) → 量化 & 混合精度 → 内存规划 & Buffer 复用             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-| 命令 | 说明 |
-|------|------|
-| `make test` | 运行全部测试 |
-| `make test DOMAIN=ast` | 只运行 ast 域测试（^V[1-4]_） |
-| `make test DOMAIN=pass` | 只运行 pass 域测试（label pass） |
-| `make run_tests DOMAIN=ast` | 只运行 ast 域测试（^V[1-4]_） |
-| `make run_tests DOMAIN=pass` | 只运行 pass 域测试（label pass） |
-| `make test_ast` | 同上，等价于 `make run_tests DOMAIN=ast` |
-| `make test_pass` | 同上，等价于 `make run_tests DOMAIN=pass` |
-| `cmake --build build --target test` | 从项目根目录运行全部测试 |
-| `cmake --build build --target run_tests -- DOMAIN=pass` | 从项目根目录只运行 pass 测试 |
-| `cmake --build build --target test_ast` / `test_pass` | 从项目根目录只运行对应域 |
+### 阶段目录与依赖
 
-pass 域 UT：  
-- **Pass_SimplePass_Src**：pass 源码 C++ UT（直接跑 `SimplePeepholePass` / `RemoveEmptyBlockPass`，解析 IR 后断言优化结果）。  
-- **Pass_SimplePass**：脚本测试（跑 opt + SimplePass 插件并校验输出 IR：无 `add i32 %x, 0`、有 `ret i32 %x`）。
+| 目录 | 阶段 | 说明 | 依赖 | make target |
+|------|------|------|------|-------------|
+| `common/` | — | ONNX Protobuf 绑定、mini IR 定义、测试模型生成 | Protobuf | — |
+| `1_onnx_parse/` | 1 | ONNX 模型解析：遍历 GraphProto/NodeProto/TensorProto + Shape 推断 | Protobuf | `run_graph` |
+| `2_onnx_to_ir/` | 2 | ONNX → 自定义 IR Lowering：Add→ir.add, MatMul→ir.dot_general, Conv→ir.convolution | Protobuf | `run_graph` |
+| `3_graph_optimize/` | 3 | 图级优化：Conv+BN Fusion、Transpose 消除、常量折叠 | Protobuf | `run_graph` |
+| `4_torch_to_stablehlo/` | 4 | PyTorch → StableHLO 导出（Python，不参与 CMake 构建） | Python | — |
+| `5_onnx_to_stablehlo/` | 5 | ONNX → StableHLO 三级 Lowering（L1 基础/L2 broadcast+dynamic/L3 conversion framework） | Protobuf | `run_lowering` |
+| `6_stablehlo_passes/` | 6 | 真实 MLIR Pass 插件：StableHLO Conv+BN Fusion（DialectPass .so + mlir-opt 加载） | MLIR | `conv_bn_optimized` |
+| `7_stablehlo_opt/` | 7 | StableHLO 6-Stage 优化：Canon→Shape→Graph(CSE/DCE/Fusion)→Layout→Clean→Legal(→Linalg) | **无** | `run_shlo_opt` |
+| `8_linalg_opt/` | 8 | Linalg 7-Stage Fusion：依赖分析→候选构建→代价模型→Tile-aware→融合重写→清理 | **无** | `run_linalg` |
+| `9_bufferize/` | 9 | One-Shot Bufferization 8-Stage：别名分析→In-place→WAR/RAW 冲突→Copy 插入→Dealloc | **无** | `run_buf` |
+| `10_scf_affine/` | 10 | SCF/Affine Loop 9-Stage：Linalg→Loop→Tiling→Interchange→Fusion→Parallel→向量化 | **无** | `run_scf` |
+| `11_vector/` | 11 | Vector Dialect 6-Stage：前置检查→Core(transfer_read/write/fma)→Register Blocking→LLVM | **无** | `run_vec` |
+| `12_llvm_lowering/` | 12 | LLVM Backend 7-Stage：Vector Lowering→LLVM IR→ISel→RegAlloc→Scheduling→Machine Code | **无** | `run_llvm_lower` |
+| `13_gpu_codegen/` | 13 | GPU Codegen 7-Stage：并行检测→Thread Mapping→GPU Dialect→Shared Mem→NVVM→PTX→Occupancy | **无** | `run_gpu` |
+| `14_quantization/` | 14 | 量化 7-Stage：校准统计→Scale 计算→量化融合→QLinear 重写→混合精度分析→Speedup 估算 | **无** | `run_quant` |
+| `15_memory_planning/` | 15 | 内存规划 7-Stage：Liveness→干涉图→Offset 分配→Buffer 复用→In-place 优化→峰值分析 | **无** | `run_memplan` |
 
-### LLVM Pass 插件（opt 加载 .so）
+---
 
-在检测到 `llvm-config` 时，会构建 `src/pass/` 下的 **SimplePass** 等插件（`.so`），并通过 CMake target 封装「用 opt 加载插件并跑 pass」的命令。运行 pass 使用 **make run DOMAIN=pass** 或 **make run_pass**，**不支持 make pass**。
+## 运行命令参考
 
-| 命令 | 说明 |
-|------|------|
-| `cmake --build build --target SimplePass` | 仅编译插件，生成 `build/src/pass/SimplePass.so` |
-| `make run_simple_pass` | 用 opt 处理 `simple_pass.ll`，输出到 `simple_pass_opt.ll` |
-| `make run_remove_trivial_block` | 用 opt 处理 `remove_trivial_block.ll` |
-| `make run_remove_trivial_loop` | 用 opt 处理 `remove_trivial_loop.ll` |
-| `make run_remove_zero_trip_loop` | 用 opt 处理 `remove_zero_trip_loop.ll` |
+所有命令在 **build 目录**下执行（或从项目根目录使用 `cmake --build build --target <target>`）。
 
-等价的手动命令（在项目根目录）：
+### AI 编译器各阶段运行
+
+#### 快速入门：逐阶段运行
 
 ```bash
-opt -load-pass-plugin=build/src/pass/SimplePass.so -passes="my-peephole,my-cfg" src/pass/simple_pass.ll -S -o build/src/pass/simple_pass_opt.ll
+cd build
+
+# ── 前端（需 Protobuf）──
+make run_graph              # Stage 1+2+3: ONNX 解析 → IR Lowering → 图优化
+make run_lowering           # Stage 5: ONNX → StableHLO 三级 Lowering (L1+L2+L3)
+make conv_bn_optimized      # Stage 4+6: PyTorch 导出 → mlir-opt Conv+BN Fusion Pass
+
+# ── 高级优化（纯 C++，无需任何依赖）──
+make run_shlo_opt           # Stage 7: StableHLO 6-Stage 优化 pipeline
+make run_linalg             # Stage 8: Linalg Tensor 级 Tiling & Fusion pipeline
+make run_buf                # Stage 9: One-Shot Bufferization pipeline
+
+# ── 后端（纯 C++）──
+make run_scf                # Stage 10: SCF/Affine Loop 级优化 pipeline
+make run_vec                # Stage 11: Vector Dialect 向量化 pipeline
+make run_llvm_lower         # Stage 12: Vector → LLVM Backend (ISel/RegAlloc/Sched/Emit)
+
+# ── GPU & 部署优化（纯 C++）──
+make run_gpu                # Stage 13: GPU Code Generation (→ NVVM → PTX → Occupancy)
+make run_quant              # Stage 14: Quantization & 混合精度 pipeline
+make run_memplan            # Stage 15: Memory Planning & Buffer 复用 pipeline
 ```
 
-推荐在 build 目录下使用：`make run DOMAIN=pass` 或 `make run_pass` 跑 pass。
+#### 通过 DOMAIN/PASS 参数运行
 
-### MLIR：`cpu/` 与 `gpu/`（先看这一节）
+`make run DOMAIN=mlir` 系统支持通过 `PASS` 参数选择特定阶段：
 
-| 路径 | 是否被本仓库 CMake 构建 | 内容 |
-|------|-------------------------|------|
-| **`src/mlir/cpu/`** | **否**（无 `CMakeLists.txt`） | **CPU/RISC-V 等执行栈**：**Linalg 起 → LLVM 后端**的手工流水线；见 [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) |
-| **`src/mlir/gpu/`** | **是**（需 `find_package(MLIR)` 成功） | **AI 编译 L1 图级**（StableHLO Pass、Conv+BN 融合等）；`conv_bn_model.py` + `mlir-opt`；分层说明见 [`src/mlir/README.md`](src/mlir/README.md) |
+```bash
+# 运行全部 MLIR 阶段（Stage 1-15 所有已构建的 target）
+make run_mlir
+make run DOMAIN=mlir
 
-- **区分方式**：根目录 **`cmake ..` 只会 `add_subdirectory(mlir/gpu)`**；`mlir/cpu` **不会**生成任何 target。跑 cpu 流水线前先在 **[`src/mlir/cpu/README.md`](src/mlir/cpu/README.md)** 完成**环境准备**，再在 `src/mlir/cpu` 下按该文档**第二节**执行命令（或只阅读仓库内示例 `.mlir`）。
-- **目录关系**（`run_mlir` 只对应 gpu 等）：**[`src/mlir/README.md`](src/mlir/README.md)**。
+# 通过 PASS 参数指定单个阶段
+make run DOMAIN=mlir PASS=graph           # Stage 1+2+3
+make run DOMAIN=mlir PASS=lowering        # Stage 5
+make run DOMAIN=mlir PASS=conv_bn_fusion  # Stage 6
+make run DOMAIN=mlir PASS=shlo_opt        # Stage 7
+make run DOMAIN=mlir PASS=linalg          # Stage 8
+make run DOMAIN=mlir PASS=bufferize       # Stage 9
+make run DOMAIN=mlir PASS=scf_affine      # Stage 10
+make run DOMAIN=mlir PASS=vector          # Stage 11
+make run DOMAIN=mlir PASS=llvm_lower      # Stage 12
+make run DOMAIN=mlir PASS=gpu_codegen     # Stage 13
+make run DOMAIN=mlir PASS=quantization    # Stage 14
+make run DOMAIN=mlir PASS=memplan         # Stage 15
+```
 
-### MLIR GPU（conv_bn_fusion 等，需 find_package(MLIR)）
+#### 完整 make target 与 PASS 参数对照表
 
-在检测到 **MLIR**（`find_package(MLIR CONFIG)` 成功）时，会构建 **`src/mlir/gpu/`**（不是 `cpu/`）下的 **DialectPass** 插件（如 `libDialectPass.so`）和 **conv_bn_optimized** 目标：先调用 **conv_bn_model.py** 生成 `conv_bn_model.mlir`，再用 **mlir-opt** 加载插件执行 `--conv-bn-fusion`，输出 `conv_bn_fusion.mlir`。需安装 **torch-mlir** 且 `PYTHONPATH` 可用，以及 **mlir-opt**（CMake 会优先使用与 `MLIR_DIR` 同构建的 `mlir-opt`）。  
-**推荐**：使用 **启用 StableHLO 的 LLVM**（环境与安装步骤见 **[`src/mlir/cpu/README.md` 第一节](src/mlir/cpu/README.md)** 的 1.3–1.4），即在同一安装前缀下安装 LLVM/MLIR 与 StableHLO；不推荐“单独 LLVM-project + 单独安装 StableHLO”。若 mlir-opt 未启用 StableHLO，运行 `conv_bn_optimized` 可能报错 `Dialect 'stablehlo' not found`，此时本仓库的插件会通过 `--load-dialect-plugin` 注册 StablehloDialect，仍可运行。
+| make target | 等价 DOMAIN/PASS | 阶段 | 说明 |
+|-------------|-----------------|------|------|
+| `make run_graph` | `DOMAIN=mlir PASS=graph` | 1+2+3 | 生成 ONNX 测试模型 → 解析 → IR Lowering → 图优化 |
+| `make run_lowering` | `DOMAIN=mlir PASS=lowering` | 5 | ONNX→StableHLO L1(基础) + L2(broadcast/dynamic) + L3(framework) |
+| `make conv_bn_optimized` | `DOMAIN=mlir PASS=conv_bn_fusion` | 4+6 | conv_bn_model.py 导出 MLIR → mlir-opt 加载 DialectPass.so 跑 Conv+BN Fusion |
+| `make run_shlo_opt` | `DOMAIN=mlir PASS=shlo_opt` | 7 | StableHLO 图: 24 ops → Canon/Shape/CSE/DCE/Fusion/Layout/Legal → 7 ops |
+| `make run_linalg` | `DOMAIN=mlir PASS=linalg` | 8 | GEMM+Bias+ReLU: 11 ops → 依赖分析/代价模型/Tile-and-Fuse → 5 ops |
+| `make run_buf` | `DOMAIN=mlir PASS=bufferize` | 9 | tensor→memref: 7×8KB=57KB → 别名/In-place/WAR 冲突 → 2×8KB=16KB(71%↓) |
+| `make run_scf` | `DOMAIN=mlir PASS=scf_affine` | 10 | GEMM+Bias+ReLU: Linalg→scf.for→Tiling→Interchange→Fusion→Parallel→Vec |
+| `make run_vec` | `DOMAIN=mlir PASS=vector` | 11 | 标量循环→vector.transfer_read/write/fma, 4-row register blocking, tail masking |
+| `make run_llvm_lower` | `DOMAIN=mlir PASS=llvm_lower` | 12 | Vector→LLVM IR→ISel(vfmadd231ps)→RegAlloc(12/16 YMM, 0 spill)→Sched→MachineCode |
+| `make run_gpu` | `DOMAIN=mlir PASS=gpu_codegen` | 13 | GEMM: 并行检测→GPU grid/block 映射→Shared mem tiling→NVVM→PTX→Occupancy 分析 |
+| `make run_quant` | `DOMAIN=mlir PASS=quantization` | 14 | ResNet block: 校准→Scale→Conv+BN+ReLU→QLinearConv→INT8/FP16 混合精度 |
+| `make run_memplan` | `DOMAIN=mlir PASS=memplan` | 15 | ResNet block: Liveness→干涉图→Offset 分配→Buffer 复用→In-place→峰值分析 |
+| `make run_mlir` | `DOMAIN=mlir` | 全部 | 依次运行上述所有已构建的 MLIR target |
 
-| 命令 | 说明 |
+#### 从项目根目录运行
+
+```bash
+# 使用 cmake --build
+cmake --build build --target run_shlo_opt       # 运行 Stage 7
+cmake --build build --target run_gpu             # 运行 Stage 13
+
+# 传递 DOMAIN/PASS（注意 -- 后传参数）
+cmake --build build --target run -- DOMAIN=mlir PASS=linalg
+cmake --build build --target run -- DOMAIN=mlir PASS=gpu_codegen
+```
+
+---
+
+### 传统编译器运行
+
+#### AST / 解释器
+
+```bash
+make run_ast                # 运行全部解释器：V1-V4 + ANTLR + NFA/DFA
+make run DOMAIN=ast         # 等价
+```
+
+#### LLVM Pass 插件
+
+需要系统安装 LLVM（`llvm-config` 可用）：
+
+```bash
+# 运行全部 pass
+make run_pass               # 等价于 make run DOMAIN=pass
+make run DOMAIN=pass
+
+# 运行指定 pass
+make run_simple_pass                       # SimplePass: my-peephole + my-cfg
+make run_remove_trivial_block              # RemoveTrivialBlockPass
+make run_remove_trivial_loop               # RemoveTrivialLoopPass
+make run_remove_zero_trip_loop             # RemoveZeroTripLoopPass
+
+make run DOMAIN=pass PASS=simple_pass      # 等价写法
+make run DOMAIN=pass PASS=remove_trivial_block
+```
+
+等价的手动命令：
+
+```bash
+opt -load-pass-plugin=build/src/pass/SimplePass.so \
+    -passes="my-peephole,my-cfg" \
+    src/pass/simple_pass.ll -S -o build/src/pass/simple_pass_opt.ll
+```
+
+#### 综合运行
+
+```bash
+make run                    # 运行全部（ast + pass，不含 mlir）
+make run DOMAIN=ast         # 只运行 ast 域
+make run DOMAIN=pass        # 只运行 pass 域
+make run DOMAIN=mlir        # 只运行 mlir 域（全部 15 个阶段的已构建 target）
+```
+
+---
+
+### 测试
+
+```bash
+make test                   # 运行全部测试
+make test_ast               # 只运行 ast 域测试
+make test_pass              # 只运行 pass 域测试
+make run_tests DOMAIN=ast   # 等价于 make test_ast
+make run_tests DOMAIN=pass  # 等价于 make test_pass
+```
+
+Pass 域测试包含：
+- **Pass_SimplePass_Src**：C++ 单元测试（直接调用 `SimplePeepholePass` / `RemoveEmptyBlockPass`，解析 IR 后断言优化结果）
+- **Pass_SimplePass**：端到端脚本测试（opt + SimplePass 插件，校验输出 IR）
+
+---
+
+## 各阶段详细说明
+
+### Stage 1-3: ONNX 前端 (`1_onnx_parse/` → `3_graph_optimize/`)
+
+**运行：** `make run_graph`
+
+使用 Protobuf C++ API 解析 ONNX 模型，构建自定义 mini IR，执行图级优化。
+测试模型由 `common/gen_test_models.py` 生成（add_matmul, conv_bn, transpose, const_fold）。
+
+Pipeline: `gen_test_models.py → run_onnx_parse → run_onnx_to_ir → run_graph_rewrite`
+
+### Stage 5: ONNX → StableHLO 三级 Lowering (`5_onnx_to_stablehlo/`)
+
+**运行：** `make run_lowering`
+
+| Level | 可执行文件 | 覆盖内容 |
+|-------|-----------|---------|
+| **L1** | `run_lowering_l1` | Add/MatMul/Conv/Reshape/Transpose → stablehlo 对应 op |
+| **L2** | `run_lowering_l2` | broadcast → `broadcast_in_dim`；dynamic shape；完整 Conv 属性映射；错误处理 |
+| **L3** | `run_lowering_l3` | `ConversionPattern` + `matchAndRewrite`；`ConversionTarget`；`applyFullConversion` |
+
+### Stage 6: StableHLO MLIR Pass 插件 (`6_stablehlo_passes/`)
+
+**运行：** `make conv_bn_optimized`
+
+唯一使用真实 MLIR C++ API 的阶段。编译为 `DialectPass.so`，通过 `mlir-opt` 的 pass/dialect plugin 机制加载：
+
+```bash
+mlir-opt --load-pass-plugin=./DialectPass.so \
+         --load-dialect-plugin=./DialectPass.so \
+         --pass-pipeline='builtin.module(func.func(conv-bn-fusion))' \
+         conv_bn_model.mlir -o conv_bn_fusion.mlir
+```
+
+### Stage 7: StableHLO 6-Stage 优化 (`7_stablehlo_opt/`)
+
+**运行：** `make run_shlo_opt`
+
+| Stage | Pass | 关键操作 |
+|-------|------|---------|
+| 1 | Canonicalization | `x+0→x`, `x*1→x`, identity reshape/transpose 消除 |
+| 2 | Shape Optimization | shape inference, `get_dimension_size→const`, dynamic→static |
+| 3 | Graph Optimization | CSE, DCE, 常量折叠, **Conv+BN Fusion**, elementwise chain 融合检测 |
+| 4 | Layout/Transpose | `T(p2)∘T(p1)→T(compose)`, transpose push-through |
+| 5 | Cleanup | 再跑 canonicalize + DCE |
+| 6 | Legalization | `stablehlo.*` → `linalg.*` / `arith.*` / `tensor.*` |
+
+综合测试：24 ops → 7 ops（所有 pass 同时作用）
+
+### Stage 8: Linalg Tensor 级 Fusion (`8_linalg_opt/`)
+
+**运行：** `make run_linalg`
+
+| Stage | Pass | 关键概念 |
+|-------|------|---------|
+| 0 | Pre-clean | canonicalize + CSE + DCE |
+| 1 | Dependence Analysis | SSA use-def 图 + alias check |
+| 2 | Fusion Candidate Build | producer-consumer 图 + elementwise chain |
+| 3 | Cost Model Filtering | 中间 tensor 消除收益 vs 多用户约束 |
+| 4 | Tile-aware Fusion | iterator 兼容性：elem+elem=直接, reduction+elem=tile-and-fuse |
+| 5 | Fusion Rewrite | merge indexing maps + merge iterators + tiling |
+| 6 | Post-clean | canonicalize + CSE + DCE |
+
+测试：`matmul → bias_add → relu → square → residual → scaling`，11 ops → 5 ops
+
+### Stage 9: One-Shot Bufferization (`9_bufferize/`)
+
+**运行：** `make run_buf`
+
+| Stage | Pass | 关键概念 |
+|-------|------|---------|
+| 0 | Pre-clean | CSE + DCE |
+| 1 | Alias Analysis | SSA use-def 链 + 潜在 alias group |
+| 2 | In-place Analysis | WAR(Write-After-Read) 冲突检测 |
+| 3 | Bufferization Decision | INPLACE / OUT_OF_PLACE 标记 |
+| 4 | Rewrite | tensor → memref, buffer assignment |
+| 5 | Copy Insertion | 冲突驱动的 memref.copy |
+| 6 | Buffer Deallocation | 所有权模型、lifetime 分析 |
+| 7 | Post-clean | 验证 allocs == deallocs（无泄漏） |
+
+核心演示：`%biased` 有两个 reader（relu 和 neg），relu in-place 覆写 → neg 需要 copy。7×8KB=57KB → 2×8KB=16KB（**71% 内存减少**）
+
+### Stage 10: SCF/Affine Loop 级优化 (`10_scf_affine/`)
+
+**运行：** `make run_scf`
+
+| Stage | Pass | 关键操作 |
+|-------|------|---------|
+| 0 | Pre-clean | 死代码消除 |
+| 1 | Linalg → Loop | matmul → 3 层 scf.for + memref.load/store |
+| 2 | Loop Canonicalization | 死循环消除 |
+| 3 | Tiling | 多级 cache-aware: [TM=32, TN=8, TK=32], 工作集 ≤ L1 32KB |
+| 4 | Loop Transform | interchange (stride-1 访问) + loop fusion (bias+relu) |
+| 5 | Parallelization | scf.parallel + thread mapping |
+| 6 | Memory Optimization | B tile stack promotion + C register promotion |
+| 7 | Vectorization Prep | `vector<8xf32>` (broadcast + fma) |
+| 8 | Cleanup | 统计: loops/ops/parallel/vector |
+
+测试：GEMM+Bias+ReLU `A[64×128]×B[128×32]`，8 loops/13 ops → 7 loops/14 ops（2 parallel, 8 vector, 8× SIMD 吞吐）
+
+### Stage 11: Vector Dialect Pipeline (`11_vector/`)
+
+**运行：** `make run_vec`
+
+| Stage | Pass | 关键概念 |
+|-------|------|---------|
+| 0 | Precondition Check | canonical loop, stride 分析 |
+| 1 | Vectorization Prep | alignment 32-byte, trip count = SIMD 倍数 |
+| 2 | Vectorization Core | scf.for → vector.transfer_read/write/fma/broadcast |
+| 3 | Vector Shaping | register blocking (unroll ii×4) + tail masking |
+| 4 | Vector Optimization | load coalescing, small-op fusion, dead elim |
+| 5 | Lowering to LLVM | vector → llvm.intr.fmuladd (AVX2: vfmadd231ps) |
+
+核心：4 row × `vector<8xf32>` register blocking → 峰值 16 FLOP/cycle
+
+### Stage 12: LLVM Backend Pipeline (`12_llvm_lowering/`)
+
+**运行：** `make run_llvm_lower`
+
+| Stage | Pass | 关键操作 |
+|-------|------|---------|
+| 0 | Vector IR Input | 接收 Stage 11 输出（4-row register-blocked FMA chain） |
+| 1 | Vector Lowering | memref → GEP, transfer_read → load, fma → @llvm.fma.v8f32 |
+| 2 | LLVM IR Generation | PHI nodes, basic block CFG, SSA |
+| 3 | Instruction Selection | DAG pattern match: fma→vfmadd231ps, GEP+load 融合 |
+| 4 | Register Allocation | 12/16 YMM used, **0 spill**, linear scan |
+| 5 | Instruction Scheduling | port model, load‖broadcast 并行, 13cy→11cy |
+| 6 | Machine Code Emission | VEX 3-byte 编码, ~145 bytes, AArch64 NEON/SVE 对比 |
+
+性能：64 FLOP/iter ÷ 11 cy = 5.8 FLOP/cycle
+
+### Stage 13: GPU Code Generation (`13_gpu_codegen/`)
+
+**运行：** `make run_gpu`
+
+| Stage | Pass | 关键操作 |
+|-------|------|---------|
+| 0 | Parallel Detection | linalg.generic iterator_types 分析: parallel → GPU, reduction → 循环 |
+| 1 | Thread Mapping | tile [64,64,32], block (16,16), thread tile 4×4 |
+| 2 | GPU Dialect Emission | gpu.launch_func, gpu.block_id/thread_id, gpu.barrier |
+| 3 | Shared Memory Tiling | bank conflict 分析, coalescing, double buffering |
+| 4 | NVVM Lowering | gpu.block_id → nvvm.read.ptx.sreg.ctaid.x, gpu.barrier → nvvm.barrier0 |
+| 5 | PTX Emission | .entry gemm_kernel, ld.global.v4, fma.rn, bar.sync |
+| 6 | Occupancy Analysis | threads/registers/shared memory 三重资源约束, wave 分析 |
+
+测试：GEMM C[1024,1024] = A[1024,512]·B[512,1024]，shared memory 24KB, occupancy 分析
+
+### Stage 14: Quantization & Mixed Precision (`14_quantization/`)
+
+**运行：** `make run_quant`
+
+| Stage | Pass | 关键操作 |
+|-------|------|---------|
+| 0 | Graph Setup | Conv+BN+ReLU+Conv+MatMul 推理图 |
+| 1 | Calibration | 收集 min/max/histogram（MinMax/Percentile/Entropy/MSE 对比） |
+| 2 | Scale Computation | symmetric/affine, per-tensor/per-channel scale+zp |
+| 3 | Fusion | Conv+BN+ReLU → QLinearConv（BN folding + ReLU clip uint8） |
+| 4 | Graph Rewrite | 插入 Q/DQ 或 QLinear 算子，INT8 GEMM 累加流程 |
+| 5 | Mixed Precision | 逐层敏感度分析: drop<0.5%→INT8, drop<0.1%→FP16, else→FP32 |
+| 6 | Summary | 模型大小压缩比, 吞吐提升估算 |
+
+### Stage 15: Memory Planning (`15_memory_planning/`)
+
+**运行：** `make run_memplan`
+
+| Stage | Pass | 关键操作 |
+|-------|------|---------|
+| 0 | Graph Setup | ResNet residual block (Conv→BN→ReLU→Conv→Add→ReLU) |
+| 1 | Liveness Analysis | 每个 tensor 的 [first_use, last_use] + 时间线可视化 |
+| 2 | Interference Graph | 活跃区间重叠检测 → 冲突矩阵 |
+| 3 | Offset Planning | Best-Fit Decreasing 策略, 非冲突 buffer 共享偏移 |
+| 4 | Buffer Reuse | 枚举可复用的 buffer 对, 潜在节省量 |
+| 5 | In-place Optimization | elementwise op 的输出 alias 输入（WAR 安全性检查） |
+| 6 | Summary | 峰值内存, 压缩比, 碎片率, 高级技术参考 |
+
+---
+
+## `src/mlir/cpu/` — CPU/RISC-V 手工流水线
+
+独立于本仓库 CMake 构建。在 `src/mlir/cpu/` 下按 [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) 的说明进行环境准备和运行。
+
+---
+
+## 附加文档
+
+| 文件 | 说明 |
 |------|------|
-| `make run DOMAIN=mlir PASS=conv_bn_fusion` | 运行 conv_bn_fusion 全流程（conv_bn_model.py -o conv_bn_model.mlir，mlir-opt conv_bn_model.mlir ... -o conv_bn_fusion.mlir） |
-| `make run_mlir` | 运行全部 MLIR 目标（当前即 conv_bn_optimized） |
-| `cmake --build build --target conv_bn_optimized` | 仅执行 conv_bn_fusion 流程，生成 `build/src/mlir/gpu/conv_bn_model.mlir` 与 `conv_bn_fusion.mlir` |
-
-### 小结
-
-- **run**：`make run` 跑全部；`make run_ast` / `make run_pass` / `make run_mlir` 只跑对应域；`make run DOMAIN=pass PASS=xxx` 或 `make run_xxx` 只跑单个 pass；`make run DOMAIN=mlir PASS=conv_bn_fusion` 跑 MLIR conv_bn_fusion。
-- **MLIR**：`make run_mlir` / `DOMAIN=mlir` **只**驱动 **`src/mlir/gpu`**；**`src/mlir/cpu`** 手工流水线见 **`src/mlir/cpu/README.md`**（环境与运行分开写）；目录对比见 **`src/mlir/README.md`**。
-- **test**：`make test` 跑全部，`make run_tests DOMAIN=ast|pass` 或 `make test_ast` / `make test_pass` 只跑对应域。
-- 用 `cmake --build` 并要传 **DOMAIN** 时，写法为：`cmake --build build --target run -- DOMAIN=ast`（`--` 与参数之间用空格）。
+| [`src/mlir/gpu/AI_COMPILER_INTERVIEW.md`](src/mlir/gpu/AI_COMPILER_INTERVIEW.md) | AI 编译器面试高频问题与答案（30+ 题，覆盖全部 15 个阶段） |
+| [`src/mlir/gpu/RESUME_PROJECT.md`](src/mlir/gpu/RESUME_PROJECT.md) | 简历项目描述（详细版/精简版/英文版） |
+| [`src/mlir/README.md`](src/mlir/README.md) | cpu/ 与 gpu/ 目录关系说明 |
+| [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) | CPU/RISC-V 流水线环境与运行说明 |

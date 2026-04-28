@@ -1,0 +1,49 @@
+# run_lowering.cmake — Run all ONNX → StableHLO lowering levels
+# Variables: RUN_L1, RUN_L2, RUN_L3, MODEL_DIR
+
+macro(banner title)
+  message(STATUS "")
+  message(STATUS "======================================")
+  message(STATUS "  ${title}")
+  message(STATUS "======================================")
+endmacro()
+
+macro(run_exe exe model)
+  execute_process(COMMAND ${exe} ${model} RESULT_VARIABLE rv)
+  if(rv)
+    message(FATAL_ERROR "${exe} failed on ${model} (exit ${rv})")
+  endif()
+endmacro()
+
+# ── Level 1: Basic lowering ──
+banner("Level 1: Basic — lowering_basic.onnx (Add + MatMul)")
+run_exe(${RUN_L1} "${MODEL_DIR}/lowering_basic.onnx")
+
+banner("Level 1: Basic — lowering_conv.onnx (Conv)")
+run_exe(${RUN_L1} "${MODEL_DIR}/lowering_conv.onnx")
+
+banner("Level 1: Basic — lowering_reshape_transpose.onnx (Reshape + Transpose)")
+run_exe(${RUN_L1} "${MODEL_DIR}/lowering_reshape_transpose.onnx")
+
+# ── Level 2: Enhanced lowering ──
+banner("Level 2: Enhanced — lowering_broadcast.onnx (broadcast Add/Mul)")
+run_exe(${RUN_L2} "${MODEL_DIR}/lowering_broadcast.onnx")
+
+banner("Level 2: Enhanced — lowering_conv_full.onnx (Conv + bias + strides + pads)")
+run_exe(${RUN_L2} "${MODEL_DIR}/lowering_conv_full.onnx")
+
+banner("Level 2: Enhanced — lowering_dynamic.onnx (dynamic batch)")
+run_exe(${RUN_L2} "${MODEL_DIR}/lowering_dynamic.onnx")
+
+# ── Level 3: Framework ──
+banner("Level 3: Framework — lowering_basic.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_basic.onnx")
+
+banner("Level 3: Framework — lowering_broadcast.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_broadcast.onnx")
+
+banner("Level 3: Framework — lowering_conv_full.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_conv_full.onnx")
+
+message(STATUS "")
+message(STATUS "All 3 lowering levels completed successfully.")
