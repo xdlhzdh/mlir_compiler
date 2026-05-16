@@ -1,5 +1,5 @@
 #pragma once
-// quant_ir.h — Simplified IR for the Quantization & Mixed-Precision pipeline.
+// quant_ir.h — P11 (14_quantization): simplified IR for quantization & mixed precision.
 //
 // Models quantization concepts common in AI compiler inference optimization:
 //

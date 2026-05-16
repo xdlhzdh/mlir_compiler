@@ -1,3 +1,4 @@
+// P5 (6_stablehlo_passes): Conv+BN fusion rewrite on mlir::stablehlo ops.
 #include "ConvBNFusionPattern.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"

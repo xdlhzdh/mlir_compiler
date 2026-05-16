@@ -1,14 +1,14 @@
-// run_linalg_opt.cpp — Linalg 7-Stage Fusion & Optimization Pipeline
+// run_linalg_opt.cpp — P6 (8_linalg_opt): Linalg on tensor fusion (linalg_ir, 7-step Pass chain)
 //
 // Full pipeline (L2 tensor level, after StableHLO → Linalg legalization):
 //
-//   Stage 0: Pre-clean          — canonicalize + CSE + DCE
-//   Stage 1: Dependence Analysis — SSA use-def + alias check
-//   Stage 2: Fusion Candidate   — producer-consumer graph + elementwise chain
-//   Stage 3: Cost Model Filter  — memory estimate + compute reuse estimate
-//   Stage 4: Tile-aware Fusion  — fuse only tile-compatible ops
-//   Stage 5: Fusion Rewrite     — merge indexing maps + merge iterator types
-//   Stage 6: Post-clean         — canonicalize + CSE + DCE
+//   P6 Step 0: Pre-clean          — canonicalize + CSE + DCE
+//   P6 Step 1: Dependence Analysis — SSA use-def + alias check
+//   P6 Step 2: Fusion Candidate   — producer-consumer graph + elementwise chain
+//   P6 Step 3: Cost Model Filter  — memory estimate + compute reuse estimate
+//   P6 Step 4: Tile-aware Fusion  — fuse only tile-compatible ops
+//   P6 Step 5: Fusion Rewrite     — merge indexing maps + merge iterator types
+//   P6 Step 6: Post-clean         — canonicalize + CSE + DCE
 //
 // Pure C++17, header-only IR, no external dependencies.
 
@@ -32,7 +32,7 @@ static bool is_generic_elem(const Op *op) {
 }
 
 // =====================================================================
-// Stage 0: Pre-clean — canonicalize + CSE + DCE
+// P6 Step 0: Pre-clean — canonicalize + CSE + DCE
 // =====================================================================
 
 static int pass_canonicalize(Graph &g) {
@@ -123,7 +123,7 @@ static int stage0_preclean(Graph &g) {
 }
 
 // =====================================================================
-// Stage 1: Dependence Analysis — SSA use-def + alias check
+// P6 Step 1: Dependence Analysis — SSA use-def + alias check
 // =====================================================================
 // Build a dependency graph between ops: use-def edges (direct data flow)
 // and alias edges (ops reading the same buffer / value).
@@ -191,7 +191,7 @@ static void stage1_dep_analysis(const Graph &g,
 }
 
 // =====================================================================
-// Stage 2: Fusion Candidate Build
+// P6 Step 2: Fusion Candidate Build
 // =====================================================================
 // From the dependency graph, build (producer, consumer) fusion candidates:
 //   1. Producer-consumer pairs (use-def edges, both are linalg ops)
@@ -230,7 +230,7 @@ build_fusion_candidates(const Graph &g, const std::vector<DepEdge> &edges) {
 }
 
 // =====================================================================
-// Stage 3: Cost Model Filtering
+// P6 Step 3: Cost Model Filtering
 // =====================================================================
 // For each candidate, compute:
 //   • mem_saved_bytes: size of intermediate tensor that would be eliminated
@@ -284,7 +284,7 @@ static void stage3_cost_filter(std::vector<FusionCandidate> &cands) {
 }
 
 // =====================================================================
-// Stage 4: Tile-aware Fusion
+// P6 Step 4: Tile-aware Fusion
 // =====================================================================
 // Further filter: only fuse if the ops' iterator types are compatible.
 //   - Two elementwise ops: always tile-compatible (same parallel dims)
@@ -356,7 +356,7 @@ static void stage4_tile_aware(std::vector<FusionCandidate> &cands) {
 }
 
 // =====================================================================
-// Stage 5: Fusion Rewrite — merge indexing maps + iterator types
+// P6 Step 5: Fusion Rewrite — merge indexing maps + iterator types
 // =====================================================================
 // For accepted candidates, actually perform the fusion:
 //   A) Elementwise + Elementwise: merge bodies, union inputs, compose maps
@@ -547,7 +547,7 @@ static int stage5_fusion_rewrite(Graph &g,
 }
 
 // =====================================================================
-// Stage 6: Post-clean — canonicalize + CSE + DCE
+// P6 Step 6: Post-clean — canonicalize + CSE + DCE
 // =====================================================================
 
 static int stage6_postclean(Graph &g) {
@@ -569,15 +569,15 @@ static int stage6_postclean(Graph &g) {
 //   %dup2 = %relu * %scale      → dup2            [CSE target]
 //   %final = %scaling + %dup1   → output          [uses CSE'd value]
 //
-// Exercises every stage:
-//   Stage 0: CSE(dup1==dup2) + DCE(dead_add)
-//   Stage 1: use-def edges + alias edges (A read by matmul and dead_add)
-//   Stage 2: 6 fusion candidates from dep graph
-//   Stage 3: cost filter (multi-user rejection for relu if it feeds both
+// Exercises every P6 step:
+//   P6 Step 0: CSE(dup1==dup2) + DCE(dead_add)
+//   P6 Step 1: use-def edges + alias edges (A read by matmul and dead_add)
+//   P6 Step 2: 6 fusion candidates from dep graph
+//   P6 Step 3: cost filter (multi-user rejection for relu if it feeds both
 //            square and residual directly — but here we chain through)
-//   Stage 4: tile-aware (matmul+bias = tile-and-fuse, elem+elem = direct)
-//   Stage 5: elementwise merge + tile + tile-and-fuse
-//   Stage 6: final cleanup
+//   P6 Step 4: tile-aware (matmul+bias = tile-and-fuse, elem+elem = direct)
+//   P6 Step 5: elementwise merge + tile + tile-and-fuse
+//   P6 Step 6: final cleanup
 
 static Graph make_test_graph() {
   Graph g;
@@ -651,7 +651,7 @@ static void run_pipeline(Graph &g, const char *label) {
 
   int total = 0;
 
-  // ── Stage 0: Pre-clean ──
+  // ── P6 Step 0: Pre-clean ──
   sep("Stage 0: Pre-clean (canonicalize + CSE + DCE)");
   {
     int c = 0;
@@ -661,20 +661,20 @@ static void run_pipeline(Graph &g, const char *label) {
     total += c;
   }
 
-  // ── Stage 1: Dependence Analysis ──
+  // ── P6 Step 1: Dependence Analysis ──
   sep("Stage 1: Dependence Analysis (SSA use-def + alias)");
   std::vector<DepEdge> edges;
   stage1_dep_analysis(g, edges);
 
-  // ── Stage 2: Fusion Candidate Build ──
+  // ── P6 Step 2: Fusion Candidate Build ──
   sep("Stage 2: Fusion Candidate Build (producer-consumer + elem chain)");
   auto cands = build_fusion_candidates(g, edges);
 
-  // ── Stage 3: Cost Model Filtering ──
+  // ── P6 Step 3: Cost Model Filtering ──
   sep("Stage 3: Cost Model Filtering (memory + compute reuse)");
   stage3_cost_filter(cands);
 
-  // ── Stage 4: Tile-aware Fusion ──
+  // ── P6 Step 4: Tile-aware Fusion ──
   sep("Stage 4: Tile-aware Fusion (iterator compatibility)");
   stage4_tile_aware(cands);
 
@@ -683,7 +683,7 @@ static void run_pipeline(Graph &g, const char *label) {
   std::cout << "\n  Summary: " << accepted << "/" << cands.size()
             << " candidates accepted\n";
 
-  // ── Stage 5: Fusion Rewrite ──
+  // ── P6 Step 5: Fusion Rewrite ──
   sep("Stage 5: Fusion Rewrite (merge maps + tile + tile-and-fuse)");
   {
     int c = stage5_fusion_rewrite(g, cands);
@@ -695,7 +695,7 @@ static void run_pipeline(Graph &g, const char *label) {
   std::cout << "\n  ──── Tiled View (after fusion + tiling) ────\n\n";
   g.print(std::cout, /*tiled_view=*/true);
 
-  // ── Stage 6: Post-clean ──
+  // ── P6 Step 6: Post-clean ──
   sep("Stage 6: Post-clean (canonicalize + CSE + DCE)");
   {
     int c = 0;

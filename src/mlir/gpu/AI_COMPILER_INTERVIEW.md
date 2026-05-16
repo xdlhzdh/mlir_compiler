@@ -1,6 +1,6 @@
 # AI 编译器面试高频问题与答案
 
-> 基于本项目 15 个阶段的完整编译器 pipeline，覆盖从模型解析到机器码生成的全流程。
+> 基于本项目 **P1–P12** 编译器 pipeline（见 `gpu/CMakeLists.txt` 顶部 Px 表；`4_torch_to_stablehlo` 为辅助脚本非标准 Px），覆盖从模型解析到机器码生成的全流程。各目录内子 Pass 记为 **Px Step N**。
 
 ---
 

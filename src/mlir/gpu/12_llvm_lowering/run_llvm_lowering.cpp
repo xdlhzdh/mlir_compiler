@@ -1,14 +1,14 @@
-// run_llvm_lowering.cpp — Vector → Machine Code 7-Stage Backend Pipeline
+// run_llvm_lowering.cpp — P9 (12_llvm_lowering): Vector → machine code (llvm_lowering_ir, 7-step Pass chain)
 //
-// Takes the vector dialect IR from Stage 11 and lowers through the full backend:
+// Takes vector dialect IR from P8 (11_vector) and lowers through the full backend:
 //
-//   Stage 0: Vector IR Input        — reconstruct vector dialect (from Stage 11 output)
-//   Stage 1: Vector Lowering        — vector ops → LLVM dialect (GEP, load, fma, shufflevector)
-//   Stage 2: LLVM Dialect → LLVM IR — emit textual LLVM IR (SSA, loop CFG with phi nodes)
-//   Stage 3: Instruction Selection  — LLVM IR → x86-64 AVX2 MachineInstr (DAG pattern match)
-//   Stage 4: Register Allocation    — virtual reg → physical (YMM/GPR), spill analysis
-//   Stage 5: Instruction Scheduling — dependency DAG, critical path, port assignment
-//   Stage 6: Machine Code Emission  — final assembly + binary encoding (hex)
+//   P9 Step 0: Vector IR Input        — reconstruct vector dialect (from P8 / 11_vector output)
+//   P9 Step 1: Vector Lowering        — vector ops → LLVM dialect (GEP, load, fma, shufflevector)
+//   P9 Step 2: LLVM Dialect → LLVM IR — emit textual LLVM IR (SSA, loop CFG with phi nodes)
+//   P9 Step 3: Instruction Selection  — LLVM IR → x86-64 AVX2 MachineInstr (DAG pattern match)
+//   P9 Step 4: Register Allocation    — virtual reg → physical (YMM/GPR), spill analysis
+//   P9 Step 5: Instruction Scheduling — dependency DAG, critical path, port assignment
+//   P9 Step 6: Machine Code Emission  — final assembly + binary encoding (hex)
 //
 // Test case: GEMM micro-kernel (4×8 register-blocked) + Bias + ReLU
 //
@@ -30,13 +30,13 @@ static void sep(const char *title) {
 }
 
 // =====================================================================
-// Stage 0: Vector IR Input (from Stage 11)
+// P9 Step 0: Vector IR Input (from P8 / 11_vector)
 // =====================================================================
 // We start from the vector dialect output of the previous pipeline:
 //   - GEMM micro-kernel: 4-row register-blocked, vector<8xf32> FMA chain
 //   - Bias + ReLU: vectorized addf + maxf
 //
-// Key ops entering this stage:
+// Key ops entering this step:
 //   vector.transfer_read  %C[ii, jo]     → %vacc0..3
 //   vector.transfer_read  %B[ki, jo]     → %vb
 //   scalar load A[ii, ki] → broadcast    → %va
@@ -99,7 +99,7 @@ static void stage0_input() {
 }
 
 // =====================================================================
-// Stage 1: Vector Lowering — vector dialect → LLVM dialect
+// P9 Step 1: Vector Lowering — vector dialect → LLVM dialect
 // =====================================================================
 // Lowering rules:
 //   memref<NxMxf32>  → ptr (flat pointer, row-major addressing)
@@ -184,7 +184,7 @@ static LLVMFunc stage1_vector_lowering() {
 }
 
 // =====================================================================
-// Stage 2: LLVM Dialect → Textual LLVM IR
+// P9 Step 2: LLVM Dialect → Textual LLVM IR
 // =====================================================================
 // Convert LLVM dialect to proper textual LLVM IR with:
 //   - Function signature with ptr arguments
@@ -279,7 +279,7 @@ static LLVMFunc stage2_llvm_ir() {
 }
 
 // =====================================================================
-// Stage 3: Instruction Selection (ISel)
+// P9 Step 3: Instruction Selection (ISel)
 // =====================================================================
 // Map LLVM IR to x86-64 AVX2 machine instructions using DAG pattern matching.
 //
@@ -419,7 +419,7 @@ static std::vector<MachineInstr> stage3_isel() {
 }
 
 // =====================================================================
-// Stage 4: Register Allocation
+// P9 Step 4: Register Allocation
 // =====================================================================
 // Map virtual registers → physical registers (x86-64 AVX2).
 //
@@ -513,7 +513,7 @@ static std::vector<RegMapping> stage4_regalloc() {
 }
 
 // =====================================================================
-// Stage 5: Instruction Scheduling
+// P9 Step 5: Instruction Scheduling
 // =====================================================================
 // Reorder instructions to maximize ILP (Instruction-Level Parallelism).
 //
@@ -604,7 +604,7 @@ static std::vector<SchedSlot> stage5_scheduling() {
 }
 
 // =====================================================================
-// Stage 6: Machine Code Emission
+// P9 Step 6: Machine Code Emission
 // =====================================================================
 // Emit final x86-64 AVX2 assembly with binary encoding.
 //

@@ -1,14 +1,14 @@
-// run_gpu_codegen.cpp — GPU Code Generation 7-Stage Pipeline
+// run_gpu_codegen.cpp — GPU Code Generation 7-step Pipeline
 //
 // Lowers parallel computation to GPU kernel code:
 //
-//   Stage 0: Parallel Detection   — identify parallelizable ops (linalg.generic, scf.parallel)
-//   Stage 1: Thread Mapping       — map parallel dims → GPU grid/block (blockIdx/threadIdx)
-//   Stage 2: GPU Dialect Emission — emit gpu.launch_func, gpu.block_id, gpu.thread_id
-//   Stage 3: Shared Memory Tiling — insert shared memory allocation + tiled loads + barriers
-//   Stage 4: NVVM Lowering        — gpu dialect → NVVM (tid/ctaid/barrier0, LLVM pointer ops)
-//   Stage 5: PTX Emission         — NVVM → PTX assembly text
-//   Stage 6: Occupancy Analysis   — estimate register/smem usage, compute SM occupancy
+//   P10 Step 0: Parallel Detection   — identify parallelizable ops (linalg.generic, scf.parallel)
+//   P10 Step 1: Thread Mapping       — map parallel dims → GPU grid/block (blockIdx/threadIdx)
+//   P10 Step 2: GPU Dialect Emission — emit gpu.launch_func, gpu.block_id, gpu.thread_id
+//   P10 Step 3: Shared Memory Tiling — insert shared memory allocation + tiled loads + barriers
+//   P10 Step 4: NVVM Lowering        — gpu dialect → NVVM (tid/ctaid/barrier0, LLVM pointer ops)
+//   P10 Step 5: PTX Emission         — NVVM → PTX assembly text
+//   P10 Step 6: Occupancy Analysis   — estimate register/smem usage, compute SM occupancy
 //
 // Test case: GEMM C[M,N] = A[M,K] · B[K,N]  with shared-memory tiling.
 //
@@ -41,7 +41,7 @@ static constexpr int THREAD_TILE_M = TILE_M / BLOCK_Y;
 static constexpr int THREAD_TILE_N = TILE_N / BLOCK_X;
 
 // =====================================================================
-// Stage 0: Parallel Detection
+// P10 Step 0: Parallel Detection
 // =====================================================================
 // Analyze linalg.generic / scf.parallel to identify parallel iteration dims.
 // For GEMM:  iterator_types = [parallel, parallel, reduction]
@@ -76,7 +76,7 @@ static void stage0_parallel_detection() {
 }
 
 // =====================================================================
-// Stage 1: Thread Mapping
+// P10 Step 1: Thread Mapping
 // =====================================================================
 // Map parallel dimensions to GPU hierarchy:
 //   m → gridDim.y * blockDim.y  (outer tiles → blocks, inner → threads)
@@ -123,7 +123,7 @@ static TileStrategy stage1_thread_mapping() {
 }
 
 // =====================================================================
-// Stage 2: GPU Dialect Emission
+// P10 Step 2: GPU Dialect Emission
 // =====================================================================
 // Emit gpu.launch_func with block/thread id ops.
 
@@ -211,7 +211,7 @@ static void stage2_gpu_dialect(const TileStrategy &ts) {
 }
 
 // =====================================================================
-// Stage 3: Shared Memory Tiling Analysis
+// P10 Step 3: Shared Memory Tiling Analysis
 // =====================================================================
 // Detailed analysis of data movement and bank conflict avoidance.
 
@@ -258,7 +258,7 @@ static void stage3_shared_memory() {
 }
 
 // =====================================================================
-// Stage 4: NVVM Lowering
+// P10 Step 4: NVVM Lowering
 // =====================================================================
 // GPU dialect → NVVM dialect (LLVM dialect + nvvm intrinsics)
 
@@ -322,7 +322,7 @@ static void stage4_nvvm_lowering() {
 }
 
 // =====================================================================
-// Stage 5: PTX Emission
+// P10 Step 5: PTX Emission
 // =====================================================================
 
 static void stage5_ptx_emission() {
@@ -392,7 +392,7 @@ static void stage5_ptx_emission() {
 }
 
 // =====================================================================
-// Stage 6: Occupancy Analysis
+// P10 Step 6: Occupancy Analysis
 // =====================================================================
 
 static void stage6_occupancy() {

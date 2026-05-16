@@ -1,12 +1,12 @@
-// run_stablehlo_opt.cpp — 6-Stage StableHLO Optimization Pipeline
+// run_stablehlo_opt.cpp — P5 (7_stablehlo_opt): StableHLO graph optimization (shlo_graph)
 //
-// 面试高频：纯 C++ 实现 StableHLO 图级优化 pass pipeline
-//   Stage 1: Canonicalization  (algebraic simplify, broadcast normalize, identity elim)
-//   Stage 2: Shape Optimization (shape inference, shape folding, dynamic→static)
-//   Stage 3: Graph Optimization (CSE, DCE, constant folding, fusion detection)
-//   Stage 4: Layout / Transpose (transpose elimination, transpose push-through)
-//   Stage 5: Cleanup            (re-run canonicalize + DCE)
-//   Stage 6: Legalization       (stablehlo → linalg)
+// 面试高频：纯 C++ 实现 StableHLO 图级优化 Pass 链（6 步，记为 P5 Step 1–6）：
+//   P5 Step 1: Canonicalization  (algebraic simplify, broadcast normalize, identity elim)
+//   P5 Step 2: Shape Optimization (shape inference, shape folding, dynamic→static)
+//   P5 Step 3: Graph Optimization (CSE, DCE, constant folding, fusion detection)
+//   P5 Step 4: Layout / Transpose (transpose elimination, transpose push-through)
+//   P5 Step 5: Cleanup            (re-run canonicalize + DCE)
+//   P5 Step 6: Legalization       (stablehlo → linalg)
 //
 // 运行: ./run_stablehlo_opt  (使用内置测试图)
 
@@ -95,7 +95,7 @@ static bool ops_equivalent(const Op *a, const Op *b) {
 }
 
 // =====================================================================
-// Stage 1: Canonicalization
+// P5 Step 1: Canonicalization
 // =====================================================================
 
 // x+0→x, 0+x→x, x*1→x, 1*x→x, x*0→0, 0*x→0, x-0→x
@@ -178,7 +178,7 @@ static int stage1_canonicalize(Graph &g) {
 }
 
 // =====================================================================
-// Stage 2: Shape Optimization
+// P5 Step 2: Shape Optimization
 // =====================================================================
 
 // Forward-propagate static shapes through elementwise and transpose ops
@@ -283,7 +283,7 @@ static int stage2_shape_opt(Graph &g) {
 }
 
 // =====================================================================
-// Stage 3: Graph Optimization
+// P5 Step 3: Graph Optimization
 // =====================================================================
 
 static int pass_cse(Graph &g) {
@@ -509,7 +509,7 @@ static int stage3_graph_opt(Graph &g) {
 }
 
 // =====================================================================
-// Stage 4: Layout / Transpose
+// P5 Step 4: Layout / Transpose
 // =====================================================================
 
 // T(p2) ∘ T(p1) → T(compose) or identity
@@ -602,7 +602,7 @@ static int stage4_layout_opt(Graph &g) {
 }
 
 // =====================================================================
-// Stage 5: Cleanup
+// P5 Step 5: Cleanup
 // =====================================================================
 
 static int stage5_cleanup(Graph &g) {
@@ -610,7 +610,7 @@ static int stage5_cleanup(Graph &g) {
 }
 
 // =====================================================================
-// Stage 6: Legalization → Linalg
+// P5 Step 6: Legalization → Linalg
 // =====================================================================
 
 static void stage6_legalize(Graph &g) {
@@ -776,24 +776,24 @@ static Graph make_test_full() {
   auto *c1 = g.add_constant_f(T, std::vector<float>(32, 2.0f));
   auto *c2 = g.add_constant_f(T, std::vector<float>(32, 3.0f));
 
-  // Stage 1 targets: x+0→x, x*1→x
+  // P5 Step 1 targets: x+0→x, x*1→x
   auto *a = g.add_op("stablehlo.add", {x, zero->result()}, {T});
   auto *b = g.add_op("stablehlo.multiply", {a->result(), one->result()}, {T});
 
-  // Stage 2 target: dynamic → static
+  // P5 Step 2 target: dynamic → static
   auto *c = g.add_op("stablehlo.add", {b->result(), y}, {T_dyn});
 
-  // Stage 3 target: constant fold
+  // P5 Step 3 target: constant fold
   auto *d = g.add_op("stablehlo.add", {c1->result(), c2->result()}, {T});
 
-  // Stage 3 target: CSE
+  // P5 Step 3 target: CSE
   auto *e1 = g.add_op("stablehlo.multiply", {c->result(), c->result()}, {T});
   auto *e2 = g.add_op("stablehlo.multiply", {c->result(), c->result()}, {T});
 
-  // Stage 3 target: DCE
+  // P5 Step 3 target: DCE
   g.add_op("stablehlo.subtract", {x, y}, {T}); // dead
 
-  // Stage 4 target: transpose cancel [1,0]∘[1,0] = identity
+  // P5 Step 4 target: transpose cancel [1,0]∘[1,0] = identity
   auto *t1 = g.add_op("stablehlo.transpose", {e1->result()}, {T_t},
                        {{"permutation", std::vector<int64_t>{1, 0}}});
   auto *t2 = g.add_op("stablehlo.transpose", {t1->result()}, {T},
@@ -834,19 +834,19 @@ static Graph make_test_comprehensive() {
   auto *bn_scale = g.add_constant_f(T4_out, std::vector<float>(32, 0.5f));
   auto *bn_bias = g.add_constant_f(T4_out, std::vector<float>(32, 0.1f));
 
-  // ==== Stage 1 targets: Canonicalization ====
+  // ==== P5 Step 1 targets: Canonicalization ====
   auto *a1 = g.add_op("stablehlo.add", {arg0, zero->result()}, {T2});
   auto *a2 = g.add_op("stablehlo.multiply", {a1->result(), one->result()}, {T2});
   auto *a3 = g.add_op("stablehlo.reshape", {a2->result()}, {T2});
   auto *a4 = g.add_op("stablehlo.transpose", {a3->result()}, {T2},
                        {{"permutation", std::vector<int64_t>{0, 1}}});
 
-  // ==== Stage 2 targets: Shape Optimization ====
+  // ==== P5 Step 2 targets: Shape Optimization ====
   auto *s1 = g.add_op("stablehlo.add", {a4->result(), arg1}, {T2_dyn});
   g.add_op("stablehlo.get_dimension_size", {arg0}, {T_scalar},
            {{"dimension", static_cast<int64_t>(0)}});
 
-  // ==== Stage 3 targets: Graph Optimization ====
+  // ==== P5 Step 3 targets: Graph Optimization ====
   auto *cf = g.add_op("stablehlo.add", {c1->result(), c2->result()}, {T2});
 
   auto *cse1 = g.add_op("stablehlo.add", {s1->result(), arg1}, {T2});
@@ -869,7 +869,7 @@ static Graph make_test_comprehensive() {
                        {cse1->result(), cf->result()}, {T2});
   auto *e2 = g.add_op("stablehlo.add", {e1->result(), s1->result()}, {T2});
 
-  // ==== Stage 4 targets: Transpose ====
+  // ==== P5 Step 4 targets: Transpose ====
   auto *t1 = g.add_op("stablehlo.transpose", {e2->result()}, {T2_t},
                        {{"permutation", std::vector<int64_t>{1, 0}}});
   auto *t2 = g.add_op("stablehlo.transpose", {t1->result()}, {T2},
@@ -883,7 +883,7 @@ static Graph make_test_comprehensive() {
 // Pipeline Runner
 // =====================================================================
 
-// per_pass=false → print per-stage (compact)
+// per_pass=false → print per P5 step (compact)
 // per_pass=true  → print after EVERY individual pass (verbose, for comprehensive test)
 static void run_pipeline(Graph &g, const char *label, bool per_pass = false) {
   auto sep = [](const char *title) {
@@ -959,7 +959,7 @@ int main() {
   std::cout << "  Stage4 Layout → Stage5 Cleanup → Stage6 Legal\n";
   std::cout << "========================================================\n";
 
-  // ── Individual stage tests (compact output) ──
+  // ── Individual P5 step tests (compact output) ──
   struct TC { const char *name; Graph (*build)(); };
   TC tests[] = {
       {"Stage 1: Canonicalization (x+0, x*1, identity reshape/transpose)",

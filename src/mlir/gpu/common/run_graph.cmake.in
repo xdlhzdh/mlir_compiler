@@ -1,4 +1,4 @@
-# run_graph.cmake — Run full L1 Graph Level pipeline
+# run_graph.cmake — Run P1+P2+P3 (ONNX parse → mini_ir → graph optimize)
 # Variables set by parent CMake: RUN_ONNX_PARSE, RUN_ONNX_TO_IR, RUN_GRAPH_REWRITE, MODEL_DIR
 
 macro(banner title)

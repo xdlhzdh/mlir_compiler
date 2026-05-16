@@ -1,5 +1,5 @@
 #pragma once
-// vector_ir.h — Simplified Vector-dialect IR for the vectorization pipeline.
+// vector_ir.h — P8 (11_vector): simplified Vector-dialect IR (with 10_scf_affine).
 //
 // Models the full journey from SCF scalar loops → vector dialect → LLVM IR:
 //

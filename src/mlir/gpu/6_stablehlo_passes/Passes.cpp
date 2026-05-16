@@ -1,3 +1,4 @@
+// P5 (6_stablehlo_passes): MLIR plugin — StableHLO dialect Pass (e.g. Conv+BN fusion) for mlir-opt.
 #include "ConvBNFusionPattern.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/DialectRegistry.h"

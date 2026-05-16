@@ -1,5 +1,5 @@
 #pragma once
-// bufferize_ir.h — Simplified IR for One-Shot Bufferization (OSB) pipeline.
+// bufferize_ir.h — P7 (9_bufferize): simplified IR for One-Shot Bufferization (OSB).
 //
 // Models tensor → memref transition:
 //   • TensorType / MemRefType — value-semantic vs buffer-semantic types

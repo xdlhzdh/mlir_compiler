@@ -1,14 +1,14 @@
-// run_memory_planning.cpp — Memory Planning & Optimization 7-Stage Pipeline
+// run_memory_planning.cpp — Memory Planning & Optimization 7-step Pipeline
 //
 // Optimizes memory allocation for inference/training graph execution:
 //
-//   Stage 0: Graph Setup            — build operator graph with tensor shapes
-//   Stage 1: Liveness Analysis      — compute live intervals [first_use, last_use] per tensor
-//   Stage 2: Interference Graph     — build conflict graph (overlapping lifetimes)
-//   Stage 3: Greedy Offset Planning — assign offsets using best-fit-decreasing
-//   Stage 4: Buffer Reuse           — share memory between non-overlapping tensors
-//   Stage 5: In-place Optimization  — eliminate copies by aliasing input/output buffers
-//   Stage 6: Summary                — peak memory, reuse ratio, fragmentation
+//   P12 Step 0: Graph Setup            — build operator graph with tensor shapes
+//   P12 Step 1: Liveness Analysis      — compute live intervals [first_use, last_use] per tensor
+//   P12 Step 2: Interference Graph     — build conflict graph (overlapping lifetimes)
+//   P12 Step 3: Greedy Offset Planning — assign offsets using best-fit-decreasing
+//   P12 Step 4: Buffer Reuse           — share memory between non-overlapping tensors
+//   P12 Step 5: In-place Optimization  — eliminate copies by aliasing input/output buffers
+//   P12 Step 6: Summary                — peak memory, reuse ratio, fragmentation
 //
 // Test case: ResNet-like block (Conv → BN → ReLU → Conv → Add → ReLU)
 //
@@ -34,7 +34,7 @@ static void sep(const char *title) {
 }
 
 // =====================================================================
-// Stage 0: Graph Setup
+// P12 Step 0: Graph Setup
 // =====================================================================
 
 static ExecGraph stage0_setup() {
@@ -114,7 +114,7 @@ static ExecGraph stage0_setup() {
 }
 
 // =====================================================================
-// Stage 1: Liveness Analysis
+// P12 Step 1: Liveness Analysis
 // =====================================================================
 
 static std::vector<LiveInterval> stage1_liveness(const ExecGraph &g) {
@@ -176,7 +176,7 @@ static std::vector<LiveInterval> stage1_liveness(const ExecGraph &g) {
 }
 
 // =====================================================================
-// Stage 2: Interference Graph
+// P12 Step 2: Interference Graph
 // =====================================================================
 
 static std::vector<std::vector<bool>>
@@ -221,7 +221,7 @@ stage2_interference(const ExecGraph &g, const std::vector<LiveInterval> &interva
 }
 
 // =====================================================================
-// Stage 3: Greedy Offset Planning (Best-Fit Decreasing)
+// P12 Step 3: Greedy Offset Planning (Best-Fit Decreasing)
 // =====================================================================
 
 static MemPool stage3_offset_planning(
@@ -298,7 +298,7 @@ static MemPool stage3_offset_planning(
 }
 
 // =====================================================================
-// Stage 4: Buffer Reuse Analysis
+// P12 Step 4: Buffer Reuse Analysis
 // =====================================================================
 
 static void stage4_buffer_reuse(
@@ -336,7 +336,7 @@ static void stage4_buffer_reuse(
 }
 
 // =====================================================================
-// Stage 5: In-place Optimization
+// P12 Step 5: In-place Optimization
 // =====================================================================
 
 static void stage5_inplace(const ExecGraph &g) {
@@ -390,7 +390,7 @@ static void stage5_inplace(const ExecGraph &g) {
 }
 
 // =====================================================================
-// Stage 6: Summary
+// P12 Step 6: Summary
 // =====================================================================
 
 static void stage6_summary(const ExecGraph &g, const MemPool &pool) {

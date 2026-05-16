@@ -1,4 +1,4 @@
-// run_onnx_to_ir.cpp — P2: ONNX → mini IR lowering
+// run_onnx_to_ir.cpp — P2 (2_onnx_to_ir): ONNX → mini_ir lowering（L1）
 //
 // 面试高频考点：将 ONNX 节点逐一 lower 到内部 IR 表示
 //   Add  → ir.add      (对应 stablehlo.add)

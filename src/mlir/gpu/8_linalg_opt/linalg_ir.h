@@ -1,5 +1,5 @@
 #pragma once
-// linalg_ir.h — Simplified Linalg tensor-level IR for fusion pipeline.
+// linalg_ir.h — P6 (8_linalg_opt): Simplified Linalg tensor-level IR for fusion.
 //
 // Key Linalg concepts modelled:
 //   • IndexingMap  — affine map from iteration domain to tensor dimensions

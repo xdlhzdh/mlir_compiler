@@ -1,5 +1,5 @@
 #pragma once
-// llvm_lowering_ir.h — Multi-level IR for the Vector → Machine Code pipeline.
+// llvm_lowering_ir.h — P9 (12_llvm_lowering): multi-level IR for Vector → machine code.
 //
 // Models the full backend journey:
 //
@@ -44,7 +44,7 @@ inline const char *llty_str(LLVMTy t) {
   return "?";
 }
 
-// ======================== LLVM Op (Stage 1-2) ========================
+// ======================== LLVM Op (P9 Step 1-2) ========================
 
 enum class LLVMOpKind {
   COMMENT,
@@ -262,7 +262,7 @@ struct LLVMFunc {
   }
 };
 
-// ======================== Machine Instruction (Stage 3) ========================
+// ======================== Machine Instruction (P9 Step 3) ========================
 
 enum class MIOpKind {
   COMMENT,
@@ -403,7 +403,7 @@ struct MachineInstr {
   }
 };
 
-// ======================== Register Allocation (Stage 4) ========================
+// ======================== Register Allocation (P9 Step 4) ========================
 
 struct RegMapping {
   std::string vreg;
@@ -421,7 +421,7 @@ struct RegMapping {
   }
 };
 
-// ======================== Scheduling (Stage 5) ========================
+// ======================== Scheduling (P9 Step 5) ========================
 
 struct SchedSlot {
   int cycle = 0;
@@ -439,7 +439,7 @@ struct SchedSlot {
   }
 };
 
-// ======================== Assembly Line (Stage 6) ========================
+// ======================== Assembly Line (P9 Step 6) ========================
 
 struct AsmLine {
   std::string label;

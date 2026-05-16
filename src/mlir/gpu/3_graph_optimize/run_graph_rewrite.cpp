@@ -1,4 +1,4 @@
-// run_graph_rewrite.cpp — P3: Graph Rewrite
+// run_graph_rewrite.cpp — P3 (3_graph_optimize): mini_ir 图级优化（L1）
 //
 // 面试高频考点：在自定义图级 IR 上实现经典优化 pass
 //   1. Conv + BN Fusion     (最经典的 graph-level fusion)

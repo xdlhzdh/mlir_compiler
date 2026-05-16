@@ -1,5 +1,5 @@
 #pragma once
-// stablehlo_ir.h — Lightweight StableHLO IR representation for lowering exercises.
+// stablehlo_ir.h — P4: lightweight StableHLO text IR for ONNX→StableHLO lowering exercises.
 //
 // Provides typed SSA values, operations, functions, modules, and a Builder
 // that produces StableHLO-compatible MLIR text output. Designed for learning

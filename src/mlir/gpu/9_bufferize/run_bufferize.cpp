@@ -1,15 +1,15 @@
-// run_bufferize.cpp — One-Shot Bufferization (OSB) 8-Stage Pipeline
+// run_bufferize.cpp — P7 (9_bufferize): One-Shot Bufferization (bufferize_ir, 8-step Pass chain)
 //
 // Converts tensor-semantic Linalg IR to buffer-semantic (memref) IR:
 //
-//   Stage 0: Pre-clean          — canonicalize + CSE + DCE
-//   Stage 1: Alias Analysis     — build alias sets, SSA use-def, mark shared values
-//   Stage 2: In-place Analysis  — write conflict detection (WAR / RAW)
-//   Stage 3: Bufferization Decision — mark INPLACE / OUT_OF_PLACE per op
-//   Stage 4: Rewrite            — tensor → memref, insert alloc, destination-passing
-//   Stage 5: Copy Insertion     — insert copies for out-of-place conflict resolution
-//   Stage 6: Buffer Deallocation — insert dealloc, ownership-based lifetime
-//   Stage 7: Post-clean         — canonicalize + DCE on bufferized IR
+//   P7 Step 0: Pre-clean          — canonicalize + CSE + DCE
+//   P7 Step 1: Alias Analysis     — build alias sets, SSA use-def, mark shared values
+//   P7 Step 2: In-place Analysis  — write conflict detection (WAR / RAW)
+//   P7 Step 3: Bufferization Decision — mark INPLACE / OUT_OF_PLACE per op
+//   P7 Step 4: Rewrite            — tensor → memref, insert alloc, destination-passing
+//   P7 Step 5: Copy Insertion     — insert copies for out-of-place conflict resolution
+//   P7 Step 6: Buffer Deallocation — insert dealloc, ownership-based lifetime
+//   P7 Step 7: Post-clean         — canonicalize + DCE on bufferized IR
 //
 // Pure C++17, header-only IR, no external dependencies.
 
@@ -77,7 +77,7 @@ struct BufPlan {
 };
 
 // =====================================================================
-// Stage 0: Pre-clean — canonicalize + CSE + DCE
+// P7 Step 0: Pre-clean — canonicalize + CSE + DCE
 // =====================================================================
 
 static int pass_cse(Graph &g) {
@@ -134,14 +134,14 @@ static int stage0_preclean(Graph &g) {
 }
 
 // =====================================================================
-// Stage 1: Alias Analysis
+// P7 Step 1: Alias Analysis
 // =====================================================================
 // Build potential alias groups: values connected by in-place data flow.
 // - Function args: each is its own alias root (immutable input)
 // - fill: creates a new alias root (fresh buffer)
 // - matmul result → aliases outs[0] (accumulator)
 // - generic result → aliases ins[0] (first input, preferred for in-place)
-// At this stage, conflicts are NOT considered — groups show POTENTIAL sharing.
+// At this step, conflicts are NOT considered — groups show POTENTIAL sharing.
 
 struct AliasInfo {
   std::unordered_map<Value *, int> val_to_group;
@@ -199,7 +199,7 @@ static AliasInfo stage1_alias_analysis(const Graph &g) {
 }
 
 // =====================================================================
-// Stage 2: In-place Analysis — write conflict detection
+// P7 Step 2: In-place Analysis — write conflict detection
 // =====================================================================
 // For each op, determine the "preferred in-place target" and check for WAR
 // conflicts: if op O writes to V's buffer in-place, any later reader of V
@@ -249,7 +249,7 @@ stage2_inplace_analysis(const Graph &g) {
 }
 
 // =====================================================================
-// Stage 3: Bufferization Decision
+// P7 Step 3: Bufferization Decision
 // =====================================================================
 // For each op:
 //   - If no conflict on preferred target → INPLACE
@@ -329,7 +329,7 @@ static void stage3_decision(Graph &g,
 }
 
 // =====================================================================
-// Stage 4: Rewrite — build buffer assignment (tensor → memref)
+// P7 Step 4: Rewrite — build buffer assignment (tensor → memref)
 // =====================================================================
 // Walk the annotated tensor graph and build a BufPlan:
 //   - Function args (inputs) → memref slots (immutable)
@@ -399,7 +399,7 @@ static BufPlan stage4_rewrite(const Graph &g) {
 }
 
 // =====================================================================
-// Stage 5: Copy Insertion
+// P7 Step 5: Copy Insertion
 // =====================================================================
 // For each op flagged needs_copy_before:
 //   - The op overwrites its in-place target's buffer
@@ -451,7 +451,7 @@ static void stage5_copy_insert(Graph &g, BufPlan &plan,
 }
 
 // =====================================================================
-// Stage 6: Buffer Deallocation — ownership-based lifetime
+// P7 Step 6: Buffer Deallocation — ownership-based lifetime
 // =====================================================================
 // Rules:
 //   - Function arguments (inputs + output): owned by caller → NO dealloc
@@ -491,7 +491,7 @@ static void stage6_dealloc(const Graph &g, BufPlan &plan) {
 }
 
 // =====================================================================
-// Stage 7: Post-clean — verify & report
+// P7 Step 7: Post-clean — verify & report
 // =====================================================================
 
 static void stage7_postclean(const BufPlan &plan) {
@@ -700,15 +700,15 @@ static void print_summary(const Graph &g, const BufPlan &plan) {
 //   %dead = %A + %A              → dead_add            [DCE target]
 //
 // Exercises:
-//   Stage 0: DCE removes dead_add
-//   Stage 1: alias chain  %init → %mm → %biased → %relu → %scaled
+//   P7 Step 0: DCE removes dead_add
+//   P7 Step 1: alias chain  %init → %mm → %biased → %relu → %scaled
 //            and separate  %biased → %neg (conflict)
-//   Stage 2: WAR conflict — relu writes %biased's buffer, neg reads after
-//   Stage 3: relu INPLACE + COPY_BEFORE; neg OUT_OF_PLACE (reads copy)
-//   Stage 4: 2 local allocs (%buf for chain, %buf for copy)
-//   Stage 5: 1 copy (save %biased before relu)
-//   Stage 6: 2 deallocs (ownership-based)
-//   Stage 7: verify allocs == deallocs (no leak)
+//   P7 Step 2: WAR conflict — relu writes %biased's buffer, neg reads after
+//   P7 Step 3: relu INPLACE + COPY_BEFORE; neg OUT_OF_PLACE (reads copy)
+//   P7 Step 4: 2 local allocs (%buf for chain, %buf for copy)
+//   P7 Step 5: 1 copy (save %biased before relu)
+//   P7 Step 6: 2 deallocs (ownership-based)
+//   P7 Step 7: verify allocs == deallocs (no leak)
 
 static Graph make_test_graph() {
   Graph g;
@@ -754,40 +754,40 @@ static void run_pipeline(Graph &g, const char *label) {
   std::cout << "\n[Initial] tensor-world graph (" << g.op_count() << " ops)\n";
   g.print(std::cout);
 
-  // ── Stage 0: Pre-clean ──
+  // ── P7 Step 0: Pre-clean ──
   sep("Stage 0: Pre-clean (canonicalize + CSE + DCE)");
   int s0 = stage0_preclean(g);
   std::cout << "    → " << s0 << " cleanup(s)\n";
   if (s0 > 0) g.print(std::cout);
 
-  // ── Stage 1: Alias Analysis ──
+  // ── P7 Step 1: Alias Analysis ──
   sep("Stage 1: Alias Analysis (potential buffer sharing)");
   auto alias = stage1_alias_analysis(g);
 
-  // ── Stage 2: In-place Analysis ──
+  // ── P7 Step 2: In-place Analysis ──
   sep("Stage 2: In-place Analysis (write conflict detection)");
   auto conflicts = stage2_inplace_analysis(g);
 
-  // ── Stage 3: Bufferization Decision ──
+  // ── P7 Step 3: Bufferization Decision ──
   sep("Stage 3: Bufferization Decision (INPLACE / OUT_OF_PLACE)");
   stage3_decision(g, conflicts);
 
   std::cout << "\n  Annotated tensor graph:\n";
   g.print(std::cout);
 
-  // ── Stage 4: Rewrite ──
+  // ── P7 Step 4: Rewrite ──
   sep("Stage 4: Rewrite (tensor → memref, buffer assignment)");
   auto plan = stage4_rewrite(g);
 
-  // ── Stage 5: Copy Insertion ──
+  // ── P7 Step 5: Copy Insertion ──
   sep("Stage 5: Copy Insertion (conflict resolution)");
   stage5_copy_insert(g, plan, conflicts);
 
-  // ── Stage 6: Buffer Deallocation ──
+  // ── P7 Step 6: Buffer Deallocation ──
   sep("Stage 6: Buffer Deallocation (ownership-based)");
   stage6_dealloc(g, plan);
 
-  // ── Stage 7: Post-clean ──
+  // ── P7 Step 7: Post-clean ──
   sep("Stage 7: Post-clean (verify)");
   stage7_postclean(plan);
 

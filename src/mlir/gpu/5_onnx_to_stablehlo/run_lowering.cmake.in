@@ -1,5 +1,5 @@
-# run_lowering.cmake — Run all ONNX → StableHLO lowering levels
-# Variables: RUN_L1, RUN_L2, RUN_L3, MODEL_DIR
+# run_lowering.cmake — Run P4 (ONNX → StableHLO lowering, tiers 1–3)
+# Variables: RUN_L1, RUN_L2, RUN_L3 (executables for tier 1/2/3), MODEL_DIR
 
 macro(banner title)
   message(STATUS "")
@@ -15,35 +15,35 @@ macro(run_exe exe model)
   endif()
 endmacro()
 
-# ── Level 1: Basic lowering ──
-banner("Level 1: Basic — lowering_basic.onnx (Add + MatMul)")
+# ── P4 tier 1: basic lowering ──
+banner("P4 tier 1: Basic — lowering_basic.onnx (Add + MatMul)")
 run_exe(${RUN_L1} "${MODEL_DIR}/lowering_basic.onnx")
 
 banner("Level 1: Basic — lowering_conv.onnx (Conv)")
 run_exe(${RUN_L1} "${MODEL_DIR}/lowering_conv.onnx")
 
-banner("Level 1: Basic — lowering_reshape_transpose.onnx (Reshape + Transpose)")
+banner("P4 tier 1: Basic — lowering_reshape_transpose.onnx (Reshape + Transpose)")
 run_exe(${RUN_L1} "${MODEL_DIR}/lowering_reshape_transpose.onnx")
 
-# ── Level 2: Enhanced lowering ──
-banner("Level 2: Enhanced — lowering_broadcast.onnx (broadcast Add/Mul)")
+# ── P4 tier 2: enhanced lowering ──
+banner("P4 tier 2: Enhanced — lowering_broadcast.onnx (broadcast Add/Mul)")
 run_exe(${RUN_L2} "${MODEL_DIR}/lowering_broadcast.onnx")
 
-banner("Level 2: Enhanced — lowering_conv_full.onnx (Conv + bias + strides + pads)")
+banner("P4 tier 2: Enhanced — lowering_conv_full.onnx (Conv + bias + strides + pads)")
 run_exe(${RUN_L2} "${MODEL_DIR}/lowering_conv_full.onnx")
 
-banner("Level 2: Enhanced — lowering_dynamic.onnx (dynamic batch)")
+banner("P4 tier 2: Enhanced — lowering_dynamic.onnx (dynamic batch)")
 run_exe(${RUN_L2} "${MODEL_DIR}/lowering_dynamic.onnx")
 
-# ── Level 3: Framework ──
-banner("Level 3: Framework — lowering_basic.onnx")
+# ── P4 tier 3: conversion framework ──
+banner("P4 tier 3: Framework — lowering_basic.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_basic.onnx")
 
-banner("Level 3: Framework — lowering_broadcast.onnx")
+banner("P4 tier 3: Framework — lowering_broadcast.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_broadcast.onnx")
 
-banner("Level 3: Framework — lowering_conv_full.onnx")
+banner("P4 tier 3: Framework — lowering_conv_full.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_conv_full.onnx")
 
 message(STATUS "")
-message(STATUS "All 3 lowering levels completed successfully.")
+message(STATUS "All P4 lowering tiers (1–3) completed successfully.")

@@ -1,9 +1,9 @@
 #pragma once
-// onnx_to_shlo_utils.h — Shared utilities for ONNX → StableHLO conversion.
+// onnx_to_shlo_utils.h — P4: shared utilities for ONNX → StableHLO conversion.
 //
 // Provides: ONNX protobuf ↔ ShLO type conversion, data extraction,
 // attribute helpers, dense constant formatting, model loading,
-// and the ConversionContext used by all three levels.
+// and the ConversionContext used by P4 tiers 1–3.
 
 #include "stablehlo_ir.h"
 #include "onnx-ml.pb.h"

@@ -1,14 +1,14 @@
-// run_vector.cpp — Vector Dialect 6-Stage Pipeline
+// run_vector.cpp — P8 (11_vector): Vector dialect pipeline (vector_ir, 6-step Pass chain)
 //
 // Takes the SCF/Affine output (scalar loops on memref) and lowers through
 // the MLIR vector dialect to LLVM-ready vector intrinsics:
 //
-//   Stage 0: Precondition Check    — canonical loop check, stride analysis
-//   Stage 1: Vectorization Prep    — alignment analysis, stride normalization
-//   Stage 2: Vectorization Core    — scf.for → vector.transfer_read/write/contract
-//   Stage 3: Vector Shaping        — unroll to SIMD width, register blocking, tail masking
-//   Stage 4: Vector Optimization   — load/store coalescing, small-op fusion, redundant elim
-//   Stage 5: Lowering to LLVM      — vector → llvm.intr.fmuladd / llvm.load / llvm.store
+//   P8 Step 0: Precondition Check    — canonical loop check, stride analysis
+//   P8 Step 1: Vectorization Prep    — alignment analysis, stride normalization
+//   P8 Step 2: Vectorization Core    — scf.for → vector.transfer_read/write/contract
+//   P8 Step 3: Vector Shaping        — unroll to SIMD width, register blocking, tail masking
+//   P8 Step 4: Vector Optimization   — load/store coalescing, small-op fusion, redundant elim
+//   P8 Step 5: Lowering to LLVM      — vector → llvm.intr.fmuladd / llvm.load / llvm.store
 //
 // Test case: GEMM micro-kernel + Bias + ReLU
 //   Tiled matmul (32×8×32 tile), bias_add, relu — all on memref
@@ -33,7 +33,7 @@ static void sep(const char *title) {
 }
 
 // =====================================================================
-// Stage 0: Vector Precondition Check
+// P8 Step 0: Vector Precondition Check
 // =====================================================================
 // Before vectorizing, verify:
 //   (1) Loops are canonical (lb=0, step=1 or known constant)
@@ -86,13 +86,13 @@ static void stage0_precondition() {
 }
 
 // =====================================================================
-// Stage 1: Vectorization Preparation
+// P8 Step 1: Vectorization Preparation
 // =====================================================================
 // Determine target SIMD width, check alignment, normalize strides.
 //   - Target: vector<8xf32> (256-bit, AVX2 / NEON equiv.)
 //   - Alignment: memref base is 32-byte aligned (assumed from alloc)
 //   - The innermost vectorizable dimension has trip count 8 (or 32)
-//     → perfect fit for vector<8xf32>, no tail needed at this stage.
+//     → perfect fit for vector<8xf32>, no tail needed at this step.
 
 static void stage1_vec_prep() {
   std::cout << "  Target SIMD width: 8 × f32 (256-bit)\n\n";
@@ -117,7 +117,7 @@ static void stage1_vec_prep() {
 }
 
 // =====================================================================
-// Stage 2: Vectorization Core — scf.for → vector dialect
+// P8 Step 2: Vectorization Core — scf.for → vector dialect
 // =====================================================================
 // Replace scalar load/arith/store loops with vector operations:
 //
@@ -262,7 +262,7 @@ static VecFunc stage2_vec_core() {
 }
 
 // =====================================================================
-// Stage 3: Vector Shaping — unroll, register blocking, tail masking
+// P8 Step 3: Vector Shaping — unroll, register blocking, tail masking
 // =====================================================================
 // (a) Register blocking: unroll ii by 4 → 4 accumulators (%vacc0..3)
 //     Benefit: hide FMA latency, keep FPU pipeline full.
@@ -320,7 +320,7 @@ static VecFunc stage3_shaping(VecFunc f) {
 }
 
 // =====================================================================
-// Stage 4: Vector Optimization
+// P8 Step 4: Vector Optimization
 // =====================================================================
 // (a) Load/store coalescing: consecutive transfer_read from same memref
 //     at offset 0 and offset 8 → single wider read (conceptual).
@@ -362,7 +362,7 @@ static VecFunc stage4_vec_opt(VecFunc f) {
 }
 
 // =====================================================================
-// Stage 5: Lowering to LLVM / GPU intrinsics
+// P8 Step 5: Lowering to LLVM / GPU intrinsics
 // =====================================================================
 // vector.transfer_read  → llvm.load (aligned)
 // vector.transfer_write → llvm.store (aligned)
@@ -505,31 +505,31 @@ static void run_pipeline() {
       << "║  Tiled matmul 32×8×32 + bias_add + relu → LLVM IR          ║\n"
       << "╚═══════════════════════════════════════════════════════════════╝\n";
 
-  // ── Stage 0 ──
+  // ── P8 Step 0 ──
   sep("Stage 0: Vector Precondition Check");
   stage0_precondition();
 
-  // ── Stage 1 ──
+  // ── P8 Step 1 ──
   sep("Stage 1: Vectorization Preparation (alignment + stride)");
   stage1_vec_prep();
 
-  // ── Stage 2 ──
+  // ── P8 Step 2 ──
   sep("Stage 2: Vectorization Core (scf → vector dialect)");
   auto f = stage2_vec_core();
   std::cout << "\n";
   f.print(std::cout);
 
-  // ── Stage 3 ──
+  // ── P8 Step 3 ──
   sep("Stage 3: Vector Shaping (register blocking + tail masking)");
   f = stage3_shaping(std::move(f));
   std::cout << "\n  Shaped IR (with tail masking demo appended):\n\n";
   f.print(std::cout);
 
-  // ── Stage 4 ──
+  // ── P8 Step 4 ──
   sep("Stage 4: Vector Optimization (coalesce + fuse + eliminate)");
   f = stage4_vec_opt(std::move(f));
 
-  // ── Stage 5 ──
+  // ── P8 Step 5 ──
   sep("Stage 5: Lowering to LLVM / GPU intrinsics");
   auto llvm_f = stage5_llvm_lower(std::move(f));
   std::cout << "\n  Final LLVM IR (pseudo):\n\n";

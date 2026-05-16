@@ -1,6 +1,6 @@
 # `src/mlir/cpu` — PyTorch → MLIR → RISC-V MatMul 端到端
 
-本目录**不参与**仓库根 CMake（无 `CMakeLists.txt`），用于 **Linalg / LLVM / RISC-V** 手工流水线与示例 IR。与 `**src/mlir/gpu/`**（StableHLO + Pass 插件、由 CMake 构建）的对比见 **[../README.md](../README.md)**。
+本目录**不参与**仓库根 CMake（无 `CMakeLists.txt`），用于 **自 L2（`linalg` on `tensor`）起的后端 lowering 实战**：真实 `.mlir`、**mlir-opt**、**LLVM / RISC-V** 直至可执行。与 **`src/mlir/gpu/`**（MLIR 路线 **前端 + L0–L4 分段教学**，由 CMake 构建）的分工见 **[../README.md](../README.md)**。
 
 本文档分为两个部分：
 

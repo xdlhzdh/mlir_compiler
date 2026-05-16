@@ -1,5 +1,5 @@
 #pragma once
-// shlo_graph.h — Mutable StableHLO graph IR with use-def chains.
+// shlo_graph.h — P5 (7_stablehlo_opt): Mutable StableHLO graph IR with use-def chains.
 //
 // Designed for implementing classic compiler optimization passes:
 // canonicalize, CSE, DCE, constant fold, transpose elimination,

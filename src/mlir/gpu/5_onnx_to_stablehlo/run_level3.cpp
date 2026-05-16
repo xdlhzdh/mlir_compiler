@@ -1,4 +1,4 @@
-// run_level3.cpp — Level 3: Pattern-based ONNX → StableHLO conversion framework
+// run_level3.cpp — P4 tier 3: pattern-based ONNX → StableHLO conversion framework
 //
 // 进阶工程师水平：能设计通用的 conversion framework
 //   (a) ConversionPattern — 每个 op 一个 pattern class (matchAndRewrite)
@@ -18,7 +18,7 @@ using namespace onnx2shlo;
 using namespace framework;
 
 // ====================================================================
-// Broadcast helper (reused from Level 2)
+// Broadcast helper (reused from P4 tier 2)
 // ====================================================================
 
 static shlo::TensorType broadcast_result_type(const shlo::TensorType &a,

@@ -5,7 +5,7 @@
 //   • Stmt  — tree node: for-loop, parallel-loop, load, store, arith, vector, etc.
 //   • Func  — function containing a flat list of statements (the program tree)
 //
-// Transformations demonstrated (9-stage pipeline):
+// P8: transformations demonstrated (9-step Pass chain within P8):
 //   Linalg → explicit scf.for/affine.for loops with memref.load/store
 //   Loop canonicalization, tiling, interchange, fusion, parallelization
 //   Memory promotion, register hoisting, vectorization preparation

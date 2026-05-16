@@ -1,5 +1,5 @@
 #pragma once
-// mini_ir.h — Lightweight graph IR for L1 Graph Level exercises.
+// mini_ir.h — P1–P3: lightweight graph IR (L1; used by P2/P3).
 //
 // Modeled after the core abstractions of real compiler IRs (ONNX GraphProto,
 // StableHLO, XLA HLO) but kept intentionally minimal for learning purposes.

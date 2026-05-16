@@ -1,5 +1,5 @@
 #pragma once
-// gpu_codegen_ir.h — Simplified IR for the GPU Code Generation pipeline.
+// gpu_codegen_ir.h — P10 (13_gpu_codegen): simplified IR for GPU code generation (concept).
 //
 // Models the full journey from high-level parallel ops → GPU dialect → NVVM/PTX:
 //

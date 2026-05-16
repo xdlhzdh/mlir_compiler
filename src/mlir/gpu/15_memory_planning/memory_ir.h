@@ -1,5 +1,5 @@
 #pragma once
-// memory_ir.h — Simplified IR for the Memory Planning & Optimization pipeline.
+// memory_ir.h — P12 (15_memory_planning): simplified IR for memory planning.
 //
 // Models memory management concepts critical to AI compiler efficiency:
 //

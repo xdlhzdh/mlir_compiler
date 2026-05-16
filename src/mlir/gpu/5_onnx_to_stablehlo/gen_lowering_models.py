@@ -1,12 +1,12 @@
-"""Generate test ONNX models for ONNX → StableHLO lowering exercises.
+"""Generate test ONNX models for P4 (ONNX → StableHLO lowering exercises).
 
 Models:
-  Level 1 (basic):
+  P4 tier 1 (basic):
     lowering_basic.onnx             — Add + MatMul chain
     lowering_conv.onnx              — Conv (no bias, basic attrs)
     lowering_reshape_transpose.onnx — Reshape + Transpose
 
-  Level 2 (enhanced):
+  P4 tier 2 (enhanced):
     lowering_broadcast.onnx         — Add/Mul with numpy-style broadcast
     lowering_conv_full.onnx         — Conv with bias, strides, pads
     lowering_dynamic.onnx           — Dynamic batch dimension

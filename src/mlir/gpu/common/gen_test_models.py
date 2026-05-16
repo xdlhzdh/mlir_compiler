@@ -1,4 +1,4 @@
-"""Generate test ONNX models for L1 graph level exercises.
+"""Generate test ONNX models for P1–P3 (ONNX / mini_ir graph exercises).
 
 Models generated:
   1. add_matmul.onnx — Add + MatMul chain for P1 (parse) and P2 (lowering)

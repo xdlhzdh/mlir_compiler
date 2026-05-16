@@ -1,3 +1,4 @@
+# 非标准 Px：借助 PyTorch + torch-mlir 导出 StableHLO 文本，供 P5（6_stablehlo_passes / mlir-opt）使用。
 from torch import Tensor
 import argparse
 import torch

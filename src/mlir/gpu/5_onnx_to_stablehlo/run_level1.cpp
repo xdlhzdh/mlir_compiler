@@ -1,4 +1,4 @@
-// run_level1.cpp — Level 1: Hand-written ONNX → StableHLO lowering
+// run_level1.cpp — P4 tier 1: hand-written ONNX → StableHLO lowering
 //
 // 面试必须达到的基本能力：能手写以下 5 种 op 的 lowering 规则
 //   ONNX Add       → stablehlo.add
@@ -14,11 +14,11 @@
 using namespace onnx2shlo;
 
 // ====================================================================
-// Level 1 Converters — one function per ONNX op
+// P4 tier 1 converters — one function per ONNX op
 // ====================================================================
 
 // Add(A, B) → stablehlo.add A, B
-// Level 1 assumption: shapes of A and B are identical (no broadcast).
+// P4 tier 1 assumption: shapes of A and B are identical (no broadcast).
 static void convert_add(const onnx::NodeProto &node, Context &ctx) {
   auto lhs = ctx.lookup(node.input(0));
   auto rhs = ctx.lookup(node.input(1));
@@ -115,7 +115,7 @@ static void convert_conv(const onnx::NodeProto &node, Context &ctx) {
 }
 
 // Reshape(data, shape_tensor) → stablehlo.reshape
-// Level 1: shape must be a known initializer.
+// P4 tier 1: shape must be a known initializer.
 static void convert_reshape(const onnx::NodeProto &node, Context &ctx) {
   auto operand = ctx.lookup(node.input(0));
 

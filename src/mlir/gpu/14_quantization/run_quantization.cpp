@@ -1,14 +1,14 @@
-// run_quantization.cpp — Quantization & Mixed-Precision 7-Stage Pipeline
+// run_quantization.cpp — Quantization & Mixed-Precision 7-step Pipeline
 //
 // Transforms a floating-point graph to lower-precision inference:
 //
-//   Stage 0: Graph Setup         — build a small Conv+BN+ReLU+MatMul inference graph
-//   Stage 1: Calibration         — collect min/max/histogram per tensor (simulated)
-//   Stage 2: Scale Computation   — compute per-tensor/per-channel scale + zero_point
-//   Stage 3: Operator Fusion     — fuse patterns for quantized execution (Conv+BN+ReLU → QConv)
-//   Stage 4: Graph Rewrite       — insert quantize/dequantize ops, lower to int8 compute
-//   Stage 5: Mixed Precision     — decide FP16 vs INT8 per operator (sensitivity analysis)
-//   Stage 6: Summary & Speedup   — compare model size, estimated throughput
+//   P11 Step 0: Graph Setup         — build a small Conv+BN+ReLU+MatMul inference graph
+//   P11 Step 1: Calibration         — collect min/max/histogram per tensor (simulated)
+//   P11 Step 2: Scale Computation   — compute per-tensor/per-channel scale + zero_point
+//   P11 Step 3: Operator Fusion     — fuse patterns for quantized execution (Conv+BN+ReLU → QConv)
+//   P11 Step 4: Graph Rewrite       — insert quantize/dequantize ops, lower to int8 compute
+//   P11 Step 5: Mixed Precision     — decide FP16 vs INT8 per operator (sensitivity analysis)
+//   P11 Step 6: Summary & Speedup   — compare model size, estimated throughput
 //
 // Pure C++17, header-only IR, no external dependencies.
 
@@ -31,7 +31,7 @@ static void sep(const char *title) {
 }
 
 // =====================================================================
-// Stage 0: Graph Setup
+// P11 Step 0: Graph Setup
 // =====================================================================
 // Build: Input → Conv2d → BatchNorm → ReLU → Conv2d → MatMul → Output
 
@@ -75,7 +75,7 @@ static Graph stage0_setup() {
 }
 
 // =====================================================================
-// Stage 1: Calibration
+// P11 Step 1: Calibration
 // =====================================================================
 // Simulate collecting activation statistics by running representative data.
 
@@ -129,7 +129,7 @@ static void stage1_calibration(Graph &g) {
 }
 
 // =====================================================================
-// Stage 2: Scale Computation
+// P11 Step 2: Scale Computation
 // =====================================================================
 // Compute quantization parameters from calibration data.
 
@@ -186,7 +186,7 @@ static void stage2_scale_computation(Graph &g) {
 }
 
 // =====================================================================
-// Stage 3: Operator Fusion for Quantization
+// P11 Step 3: Operator Fusion for Quantization
 // =====================================================================
 
 static void stage3_fusion(Graph &g) {
@@ -235,7 +235,7 @@ static void stage3_fusion(Graph &g) {
 }
 
 // =====================================================================
-// Stage 4: Graph Rewrite — Insert Q/DQ ops
+// P11 Step 4: Graph Rewrite — Insert Q/DQ ops
 // =====================================================================
 
 static void stage4_graph_rewrite(Graph &g) {
@@ -276,7 +276,7 @@ static void stage4_graph_rewrite(Graph &g) {
 }
 
 // =====================================================================
-// Stage 5: Mixed Precision — sensitivity analysis
+// P11 Step 5: Mixed Precision — sensitivity analysis
 // =====================================================================
 
 static void stage5_mixed_precision(Graph &g) {
@@ -335,7 +335,7 @@ static void stage5_mixed_precision(Graph &g) {
 }
 
 // =====================================================================
-// Stage 6: Summary & Speedup Estimate
+// P11 Step 6: Summary & Speedup Estimate
 // =====================================================================
 
 static void stage6_summary(const Graph &g) {

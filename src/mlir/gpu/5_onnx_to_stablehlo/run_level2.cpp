@@ -1,6 +1,6 @@
-// run_level2.cpp — Level 2: Enhanced ONNX → StableHLO lowering
+// run_level2.cpp — P4 tier 2: enhanced ONNX → StableHLO lowering
 //
-// 合格工程师水平：在 Level 1 基础上能处理
+// 合格工程师水平：在 P4 tier 1 基础上能处理
 //   (a) broadcast — numpy-style 广播 → 显式 broadcast_in_dim
 //   (b) dynamic shape — 处理带 '?' 维度的 tensor
 //   (c) attribute mapping — 完整的 ONNX Conv 属性映射 (auto_pad, pads, strides…)
@@ -107,7 +107,7 @@ compute_auto_pad(const std::string &auto_pad,
 }
 
 // ====================================================================
-// Level 2 Converters
+// P4 tier 2 converters
 // ====================================================================
 
 static void convert_add_l2(const onnx::NodeProto &node, Context &ctx) {

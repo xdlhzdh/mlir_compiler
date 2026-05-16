@@ -1,16 +1,16 @@
-// run_scf_affine.cpp — SCF / Affine Loop-Level Optimization 9-Stage Pipeline
+// run_scf_affine.cpp — P8 (10_scf_affine): SCF/Affine loop optimization (scf_affine_ir, 9-step Pass chain)
 //
 // Transforms Linalg-on-memref to optimized explicit loop nests:
 //
-//   Stage 0: Pre-clean             — canonicalize + CSE + DCE
-//   Stage 1: Linalg → Loop        — convert linalg ops to scf.for + memref.load/store
-//   Stage 2: Loop Canonicalization — dead loop elimination, bound normalization
-//   Stage 3: Tiling                — cache-aware multi-level tiling (L2: 32×8×32)
-//   Stage 4: Loop Transform        — interchange (i,k,j) + loop fusion (bias+relu)
-//   Stage 5: Parallelization       — scf.parallel on outer tile loops, thread mapping
-//   Stage 6: Memory Optimization   — register promotion + B tile stack promotion
-//   Stage 7: Vectorization Prep    — vector.load/fma/store on innermost dimension
-//   Stage 8: Cleanup               — final statistics + summary
+//   P8 Step 0: Pre-clean             — canonicalize + CSE + DCE
+//   P8 Step 1: Linalg → Loop        — convert linalg ops to scf.for + memref.load/store
+//   P8 Step 2: Loop Canonicalization — dead loop elimination, bound normalization
+//   P8 Step 3: Tiling                — cache-aware multi-level tiling (L2: 32×8×32)
+//   P8 Step 4: Loop Transform        — interchange (i,k,j) + loop fusion (bias+relu)
+//   P8 Step 5: Parallelization       — scf.parallel on outer tile loops, thread mapping
+//   P8 Step 6: Memory Optimization   — register promotion + B tile stack promotion
+//   P8 Step 7: Vectorization Prep    — vector.load/fma/store on innermost dimension
+//   P8 Step 8: Cleanup               — final statistics + summary
 //
 // Test case: GEMM + Bias + ReLU  (matmul → bias_add → relu)
 //   A[64×128] × B[128×32] + bias[32] → relu → C[64×32]
@@ -41,10 +41,10 @@ static void print_stats(const Func &f) {
 }
 
 // =====================================================================
-// Stage 0: Pre-clean — show initial Linalg-on-memref, remove dead ops
+// P8 Step 0: Pre-clean — show initial Linalg-on-memref, remove dead ops
 // =====================================================================
 // After bufferization, the IR is tensor-free: all ops work on memrefs.
-// Stage 0 removes dead ops (unused fill / alloc) before lowering to loops.
+// P8 Step 0 removes dead ops (unused fill / alloc) before lowering to loops.
 
 static void stage0_preclean() {
   std::cout << "  Input (Linalg on memref, after bufferization):\n\n";
@@ -63,7 +63,7 @@ static void stage0_preclean() {
 }
 
 // =====================================================================
-// Stage 1: Linalg → Loop
+// P8 Step 1: Linalg → Loop
 // =====================================================================
 // Each Linalg op is lowered to explicit scf.for nests + memref.load/store:
 //   matmul(M,N,K) → for i(M) { for j(N) { for k(K) { load, mul, add, store }}}
@@ -128,7 +128,7 @@ static Func stage1_linalg_to_loop() {
     f.body.push_back(ri);
   }
 
-  // (4) Dead empty loop (to demonstrate dead loop elimination in Stage 2)
+  // (4) Dead empty loop (to demonstrate dead loop elimination in P8 Step 2)
   {
     auto d = Stmt::For("%d", 0, 1);
     f.body.push_back(Stmt::Comment("[dead] empty loop (unused)"));
@@ -144,7 +144,7 @@ static Func stage1_linalg_to_loop() {
 }
 
 // =====================================================================
-// Stage 2: Loop Canonicalization — dead loop elimination
+// P8 Step 2: Loop Canonicalization — dead loop elimination
 // =====================================================================
 
 static int remove_empty_loops(std::vector<Stmt> &stmts) {
@@ -182,7 +182,7 @@ static int stage2_loop_canon(Func &f) {
 }
 
 // =====================================================================
-// Stage 3: Tiling — cache-aware multi-level tiling for GEMM
+// P8 Step 3: Tiling — cache-aware multi-level tiling for GEMM
 // =====================================================================
 // Tile sizes chosen for typical L1/L2 cache hierarchy:
 //   L2 outer tiles: TM=32, TN=8, TK=32
@@ -226,7 +226,7 @@ static void stage3_tiling(Func &f) {
 }
 
 // =====================================================================
-// Stage 4: Loop Transform — interchange + loop fusion
+// P8 Step 4: Loop Transform — interchange + loop fusion
 // =====================================================================
 // (a) Interchange: swap %ji ↔ %ki in matmul inner nest
 //     Before: ii → ji → ki  (k innermost: B[k,j] has stride-N access)
@@ -284,7 +284,7 @@ static void stage4_loop_transform(Func &f) {
 }
 
 // =====================================================================
-// Stage 5: Parallelization — scf.parallel on outer loops
+// P8 Step 5: Parallelization — scf.parallel on outer loops
 // =====================================================================
 // Mark outermost tile loop and fused loop as scf.parallel.
 // In real MLIR: scf.parallel → omp.parallel / gpu.launch depending on target.
@@ -306,7 +306,7 @@ static void stage5_parallelize(Func &f) {
 }
 
 // =====================================================================
-// Stage 6: Memory Optimization
+// P8 Step 6: Memory Optimization
 // =====================================================================
 // Two key optimizations for the matmul inner nest:
 //
@@ -374,7 +374,7 @@ static void stage6_mem_opt(Func &f) {
 }
 
 // =====================================================================
-// Stage 7: Vectorization Preparation
+// P8 Step 7: Vectorization Preparation
 // =====================================================================
 // The innermost %ji loop (trip count 8) maps to vector<8xf32>:
 //   - Eliminate %ji loop entirely
@@ -452,7 +452,7 @@ static void stage7_vec_prep(Func &f) {
 }
 
 // =====================================================================
-// Stage 8: Cleanup — final statistics and summary
+// P8 Step 8: Cleanup — final statistics and summary
 // =====================================================================
 
 static void stage8_cleanup(const Func &f) {
@@ -505,11 +505,11 @@ static void run_pipeline() {
       << "║  A[64×128] × B[128×32] + bias[32] → relu → C[64×32]       ║\n"
       << "╚═══════════════════════════════════════════════════════════════╝\n";
 
-  // ── Stage 0: Pre-clean ──
+  // ── P8 Step 0: Pre-clean ──
   sep("Stage 0: Pre-clean (canonicalize + CSE + DCE)");
   stage0_preclean();
 
-  // ── Stage 1: Linalg → Loop ──
+  // ── P8 Step 1: Linalg → Loop ──
   sep("Stage 1: Linalg → Loop (convert-linalg-to-scf)");
   auto f = stage1_linalg_to_loop();
   std::cout << "\n";
@@ -517,13 +517,13 @@ static void run_pipeline() {
   std::cout << "\n  ";
   print_stats(f);
 
-  // ── Stage 2: Loop Canonicalization ──
+  // ── P8 Step 2: Loop Canonicalization ──
   sep("Stage 2: Loop Canonicalization (dead loop elimination)");
   int s2 = stage2_loop_canon(f);
   std::cout << "  → removed " << s2 << " dead loop(s)\n  ";
   print_stats(f);
 
-  // ── Stage 3: Tiling ──
+  // ── P8 Step 3: Tiling ──
   sep("Stage 3: Tiling (cache-aware multi-level)");
   stage3_tiling(f);
   std::cout << "\n";
@@ -531,7 +531,7 @@ static void run_pipeline() {
   std::cout << "\n  ";
   print_stats(f);
 
-  // ── Stage 4: Loop Transform ──
+  // ── P8 Step 4: Loop Transform ──
   sep("Stage 4: Loop Transform (interchange + fusion)");
   stage4_loop_transform(f);
   std::cout << "\n";
@@ -539,7 +539,7 @@ static void run_pipeline() {
   std::cout << "\n  ";
   print_stats(f);
 
-  // ── Stage 5: Parallelization ──
+  // ── P8 Step 5: Parallelization ──
   sep("Stage 5: Parallelization (scf.parallel + thread mapping)");
   stage5_parallelize(f);
   std::cout << "\n";
@@ -547,7 +547,7 @@ static void run_pipeline() {
   std::cout << "\n  ";
   print_stats(f);
 
-  // ── Stage 6: Memory Optimization ──
+  // ── P8 Step 6: Memory Optimization ──
   sep("Stage 6: Memory Optimization (register promo + stack promo)");
   stage6_mem_opt(f);
   std::cout << "\n";
@@ -555,7 +555,7 @@ static void run_pipeline() {
   std::cout << "\n  ";
   print_stats(f);
 
-  // ── Stage 7: Vectorization Preparation ──
+  // ── P8 Step 7: Vectorization Preparation ──
   sep("Stage 7: Vectorization Preparation (vector<8xf32>)");
   stage7_vec_prep(f);
   std::cout << "\n";
@@ -563,7 +563,7 @@ static void run_pipeline() {
   std::cout << "\n  ";
   print_stats(f);
 
-  // ── Stage 8: Cleanup ──
+  // ── P8 Step 8: Cleanup ──
   sep("Stage 8: Cleanup (final report)");
   stage8_cleanup(f);
 }

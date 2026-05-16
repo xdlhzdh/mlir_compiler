@@ -1,5 +1,5 @@
 #pragma once
-// conversion_framework.h — Pattern-based ONNX → StableHLO conversion framework
+// conversion_framework.h — P4 tier 3: pattern-based ONNX → StableHLO conversion framework
 //
 // Mirrors the key abstractions of MLIR's DialectConversion:
 //   ConversionPattern  — per-op rewrite rule (match + rewrite)

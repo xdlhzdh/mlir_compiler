@@ -1,4 +1,4 @@
-// run_onnx_parse.cpp — P1: ONNX 解析
+// run_onnx_parse.cpp — P1 (1_onnx_parse): ONNX GraphProto 解析（L0 交换格式）
 //
 // 面试高频考点：用 Protobuf C++ API 读取 ONNX 模型，遍历
 //   GraphProto / NodeProto / TensorProto / AttributeProto

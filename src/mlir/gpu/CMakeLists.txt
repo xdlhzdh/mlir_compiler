@@ -1,27 +1,30 @@
 # =============================================================================
-# src/mlir/gpu — L1 Graph Level 全流程
+# src/mlir/gpu — MLIR 路线 AI 编译器 Pipeline（Px 编号）
 #
-# 目录按编译器 pipeline 阶段组织：
+# 标准阶段 Px（目录名前的数字仅作排序，以 Px 为准）：
 #
-#   common/               共享基础设施 (ONNX Protobuf 绑定, mini IR 头文件, 脚本)
-#   1_onnx_parse/         阶段1: ONNX 模型解析 (GraphProto / NodeProto / TensorProto)
-#   2_onnx_to_ir/         阶段2: ONNX → 自定义 IR Lowering (Add→ir.add, MatMul→ir.dot_general)
-#   3_graph_optimize/     阶段3: 图级优化 (Conv+BN Fusion, Transpose 消除, 常量折叠)
-#   4_torch_to_stablehlo/ 阶段4: PyTorch → StableHLO 导出 (Python, 不参与 CMake 构建)
-#   5_onnx_to_stablehlo/  阶段5: ONNX → StableHLO 三级 Lowering 练习 (L1/L2/L3) — 先生成 IR
-#   6_stablehlo_passes/   阶段6: StableHLO 上的 MLIR Pass 插件 (Conv+BN Fusion 等) — 再跑优化
-#   7_stablehlo_opt/      阶段7: StableHLO 6-Stage 优化 Pass 全流程 (纯C++, 无外部依赖)
-#   8_linalg_opt/         阶段8: Linalg Tensor 级优化 (Clustering + Tiling + Tile-and-Fuse)
-#   9_bufferize/          阶段9: One-Shot Bufferization (tensor → memref, alias + in-place + dealloc)
-#   10_scf_affine/        阶段10: SCF/Affine Loop 级优化 (Tiling + Interchange + Fusion + Parallel + Vec)
-#   11_vector/            阶段11: Vector Dialect Pipeline (Precond → Core → Shaping → Opt → LLVM)
-#   12_llvm_lowering/     阶段12: Vector → LLVM Backend Pipeline (VecLower → LLVMIR → ISel → RegAlloc → Sched → Emit)
-#   13_gpu_codegen/       阶段13: GPU Code Generation (ParallelDetect → ThreadMap → GPUDialect → SharedMem → NVVM → PTX)
-#   14_quantization/      阶段14: Quantization & Mixed-Precision (Calib → Scale → Fusion → Rewrite → MixedPrec)
-#   15_memory_planning/   阶段15: Memory Planning & Optimization (Liveness → Interference → OffsetPlan → Reuse → InPlace)
+#   P1  1_onnx_parse/         L0：ONNX GraphProto 解析
+#   P2  2_onnx_to_ir/         L1：ONNX → mini_ir
+#   P3  3_graph_optimize/     L1：mini_ir 图优化
+#   —   4_torch_to_stablehlo/ 非标准 Px：PyTorch/torch-mlir 导出 StableHLO（辅助 P5）
+#   P4  5_onnx_to_stablehlo/  L1：ONNX → StableHLO lowering 练习（内含 tier 1/2/3 难度）
+#   P5  6_stablehlo_passes/   L1：真实 MLIR StableHLO + Pass 插件（mlir-opt）
+#       7_stablehlo_opt/       L1：StableHLO 图优化（shlo_graph，6-step Pass 链）
+#   P6  8_linalg_opt/         L2：Linalg on tensor（linalg_ir）
+#   P7  9_bufferize/          L2：OSB / linalg on memref（bufferize_ir）
+#   P8  10_scf_affine/        L3：循环级（scf_affine_ir）
+#       11_vector/             L3：向量化（vector_ir）
+#   P9  12_llvm_lowering/     L4：Vector → LLVM 后端（llvm_lowering_ir）
+#   P10 13_gpu_codegen/       L3/L4：GPU 映射与 PTX（概念）
+#   P11 14_quantization/      横切：量化与混合精度
+#   P12 15_memory_planning/   横切：内存规划
+#
+#   common/                   共享：onnx_proto、mini_ir.h、脚本
+#
+# 子 Pass 流水线内的步骤在源码注释中记为「Px Step N」，勿与目录 Px 混淆。
 # =============================================================================
 
-# ─── 阶段 1~3: 纯 C++ ONNX/IR 练习 (仅依赖 Protobuf) ───────────────────────
+# ─── P1–P3：纯 C++ ONNX / mini_ir（仅依赖 Protobuf）────────────────────────
 
 find_package(Protobuf QUIET)
 if(Protobuf_FOUND)
@@ -76,21 +79,21 @@ if(Protobuf_FOUND)
     DEPENDS run_onnx_parse run_onnx_to_ir run_graph_rewrite gen_test_models
     COMMENT "Running full L1 Graph Level pipeline P1+P2+P3")
 
-  # ─── 阶段 5: ONNX → StableHLO 三级 Lowering 练习 (仅依赖 Protobuf) ─────────
+  # ─── P4：ONNX → StableHLO lowering 练习（tier 1/2/3，仅 Protobuf）──────────
 
   set(ONNX_TO_STABLEHLO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/5_onnx_to_stablehlo)
 
-  # Level 1: 基础 lowering (Add/MatMul/Conv/Reshape/Transpose)
+  # P4 tier 1: 基础 lowering (Add/MatMul/Conv/Reshape/Transpose)
   add_executable(run_lowering_l1 ${ONNX_TO_STABLEHLO_DIR}/run_level1.cpp)
   target_include_directories(run_lowering_l1 PRIVATE ${COMMON_DIR} ${ONNX_TO_STABLEHLO_DIR})
   target_link_libraries(run_lowering_l1 onnx_proto)
 
-  # Level 2: broadcast / dynamic shape / attribute mapping / error handling
+  # P4 tier 2: broadcast / dynamic shape / attribute mapping / error handling
   add_executable(run_lowering_l2 ${ONNX_TO_STABLEHLO_DIR}/run_level2.cpp)
   target_include_directories(run_lowering_l2 PRIVATE ${COMMON_DIR} ${ONNX_TO_STABLEHLO_DIR})
   target_link_libraries(run_lowering_l2 onnx_proto)
 
-  # Level 3: conversion framework / legalization pipeline / pattern-based
+  # P4 tier 3: conversion framework / legalization pipeline / pattern-based
   add_executable(run_lowering_l3 ${ONNX_TO_STABLEHLO_DIR}/run_level3.cpp)
   target_include_directories(run_lowering_l3 PRIVATE ${COMMON_DIR} ${ONNX_TO_STABLEHLO_DIR})
   target_link_libraries(run_lowering_l3 onnx_proto)
@@ -101,9 +104,9 @@ if(Protobuf_FOUND)
     COMMAND ${CMAKE_COMMAND} -E make_directory ${LOWERING_MODEL_DIR}
     COMMAND ${Python3_EXECUTABLE} ${ONNX_TO_STABLEHLO_DIR}/gen_lowering_models.py ${LOWERING_MODEL_DIR}
     WORKING_DIRECTORY ${ONNX_TO_STABLEHLO_DIR}
-    COMMENT "Generating lowering test ONNX models for L1/L2/L3")
+    COMMENT "Generating lowering test ONNX models for P4 (tiers 1-3)")
 
-  # 一键运行 L1+L2+L3
+  # 一键运行 P4 tier 1+2+3
   configure_file(
     "${ONNX_TO_STABLEHLO_DIR}/run_lowering.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/run_lowering.cmake"
@@ -117,12 +120,12 @@ if(Protobuf_FOUND)
       -DMODEL_DIR=${LOWERING_MODEL_DIR}
       -P ${CMAKE_CURRENT_BINARY_DIR}/run_lowering.cmake
     DEPENDS run_lowering_l1 run_lowering_l2 run_lowering_l3 gen_lowering_models
-    COMMENT "Running full ONNX→StableHLO lowering pipeline L1+L2+L3")
+    COMMENT "Running full P4 ONNX→StableHLO lowering (tiers 1+2+3)")
 else()
-  message(WARNING "Protobuf not found. L1 graph targets (P1~P3) will not be built.")
+  message(WARNING "Protobuf not found. P1~P3 targets will not be built.")
 endif()
 
-# ─── 阶段 7: StableHLO 优化 Pass 全流程 (纯 C++, 无外部依赖) ─────────────────
+# ─── P5（7_stablehlo_opt）：StableHLO 图优化，shlo_graph，纯 C++ ───────────
 
 set(SHLO_OPT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/7_stablehlo_opt)
 add_executable(run_stablehlo_opt ${SHLO_OPT_DIR}/run_stablehlo_opt.cpp)
@@ -132,9 +135,9 @@ target_compile_features(run_stablehlo_opt PRIVATE cxx_std_17)
 add_custom_target(run_shlo_opt
   COMMAND $<TARGET_FILE:run_stablehlo_opt>
   DEPENDS run_stablehlo_opt
-  COMMENT "Running StableHLO 6-stage optimization pipeline (Stage1~6)")
+  COMMENT "Running P5 shlo_graph optimization (6-step pipeline)")
 
-# ─── 阶段 8: Linalg Tensor 级优化 (纯 C++, 无外部依赖) ──────────────────────
+# ─── P6（8_linalg_opt）：Linalg on tensor ───────────────────────────────────
 
 set(LINALG_OPT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/8_linalg_opt)
 add_executable(run_linalg_opt ${LINALG_OPT_DIR}/run_linalg_opt.cpp)
@@ -146,7 +149,7 @@ add_custom_target(run_linalg
   DEPENDS run_linalg_opt
   COMMENT "Running Linalg tensor-level optimization pipeline (Cluster→Tile→Fuse→DCE)")
 
-# ─── 阶段 9: One-Shot Bufferization (纯 C++, 无外部依赖) ─────────────────────
+# ─── P7（9_bufferize）：One-Shot Bufferization ───────────────────────────────
 
 set(BUFFERIZE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/9_bufferize)
 add_executable(run_bufferize ${BUFFERIZE_DIR}/run_bufferize.cpp)
@@ -158,7 +161,7 @@ add_custom_target(run_buf
   DEPENDS run_bufferize
   COMMENT "Running One-Shot Bufferization pipeline (Alias→InPlace→Rewrite→Copy→Dealloc)")
 
-# ─── 阶段 10: SCF/Affine Loop 级优化 (纯 C++, 无外部依赖) ─────────────────
+# ─── P8（10_scf_affine）：SCF/Affine 循环优化 ─────────────────────────────
 
 set(SCF_AFFINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/10_scf_affine)
 add_executable(run_scf_affine ${SCF_AFFINE_DIR}/run_scf_affine.cpp)
@@ -170,7 +173,7 @@ add_custom_target(run_scf
   DEPENDS run_scf_affine
   COMMENT "Running SCF/Affine loop-level optimization pipeline (Tile→Interchange→Fuse→Parallel→Vec)")
 
-# ─── 阶段 11: Vector Dialect Pipeline (纯 C++, 无外部依赖) ──────────────────
+# ─── P8（11_vector）：Vector 向量化 ─────────────────────────────────────────
 
 set(VECTOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/11_vector)
 add_executable(run_vector_pipeline ${VECTOR_DIR}/run_vector.cpp)
@@ -182,7 +185,7 @@ add_custom_target(run_vec
   DEPENDS run_vector_pipeline
   COMMENT "Running Vector dialect pipeline (Precond→Core→Shaping→Opt→LLVM)")
 
-# ─── 阶段 12: Vector → LLVM Lowering Backend Pipeline (纯 C++, 无外部依赖) ────
+# ─── P9（12_llvm_lowering）：Vector → LLVM 后端 ─────────────────────────────
 
 set(LLVM_LOWER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/12_llvm_lowering)
 add_executable(run_llvm_lowering ${LLVM_LOWER_DIR}/run_llvm_lowering.cpp)
@@ -194,7 +197,7 @@ add_custom_target(run_llvm_lower
   DEPENDS run_llvm_lowering
   COMMENT "Running Vector→LLVM lowering backend pipeline (VecLower→LLVMIR→ISel→RegAlloc→Sched→Emit)")
 
-# ─── 阶段 13: GPU Code Generation Pipeline (纯 C++, 无外部依赖) ──────────────
+# ─── P10（13_gpu_codegen）：GPU 代码生成（概念）──────────────────────────────
 
 set(GPU_CODEGEN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/13_gpu_codegen)
 add_executable(run_gpu_codegen ${GPU_CODEGEN_DIR}/run_gpu_codegen.cpp)
@@ -206,7 +209,7 @@ add_custom_target(run_gpu
   DEPENDS run_gpu_codegen
   COMMENT "Running GPU code generation pipeline (ParallelDetect→ThreadMap→GPUDialect→SharedMem→NVVM→PTX→Occupancy)")
 
-# ─── 阶段 14: Quantization & Mixed-Precision Pipeline (纯 C++, 无外部依赖) ───
+# ─── P11（14_quantization）：量化与混合精度 ─────────────────────────────────
 
 set(QUANT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/14_quantization)
 add_executable(run_quantization ${QUANT_DIR}/run_quantization.cpp)
@@ -218,7 +221,7 @@ add_custom_target(run_quant
   DEPENDS run_quantization
   COMMENT "Running Quantization & Mixed-Precision pipeline (Calib→Scale→Fusion→Rewrite→MixedPrec→Summary)")
 
-# ─── 阶段 15: Memory Planning & Optimization Pipeline (纯 C++, 无外部依赖) ───
+# ─── P12（15_memory_planning）：内存规划 ───────────────────────────────────
 
 set(MEMPLAN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/15_memory_planning)
 add_executable(run_memory_planning ${MEMPLAN_DIR}/run_memory_planning.cpp)
@@ -230,7 +233,7 @@ add_custom_target(run_memplan
   DEPENDS run_memory_planning
   COMMENT "Running Memory Planning pipeline (Liveness→Interference→OffsetPlan→Reuse→InPlace→Summary)")
 
-# ─── 阶段 6: StableHLO MLIR Pass 插件 (依赖 MLIR + StableHLO) ──────────────
+# ─── P5（6_stablehlo_passes）：真实 MLIR StableHLO Pass 插件 ──────────────
 
 find_package(MLIR QUIET CONFIG)
 if(MLIR_FOUND)
