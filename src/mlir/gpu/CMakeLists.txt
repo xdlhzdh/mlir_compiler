@@ -388,7 +388,7 @@ if(MLIR_FOUND)
   )
   add_custom_target(conv_bn_optimized
     COMMAND ${CMAKE_COMMAND} -E echo "Generating conv_bn_model.mlir via conv_bn_model.py ..."
-    COMMAND ${CONV_BN_PYTHON} "${CONV_BN_PY}" -o "${CONV_BN_MODEL_MLIR}"
+    COMMAND ${_conv_bn_env_cmd} ${CONV_BN_PYTHON} "${CONV_BN_PY}" -o "${CONV_BN_MODEL_MLIR}"
     COMMAND ${CMAKE_COMMAND} -E echo "Running mlir-opt --conv-bn-fusion -> conv_bn_fusion.mlir"
     COMMAND sh "${CMAKE_CURRENT_BINARY_DIR}/run_mlir_opt.sh" "${MLIR_OPT_EXE}" "${CONV_BN_MODEL_MLIR}" "${CONV_BN_OPTIMIZED_MLIR}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}

@@ -16,16 +16,17 @@ set(AST_RUNS
   run_interpreter_v1 run_interpreter_v2 run_interpreter_v3 run_interpreter_v4
   run_interpreter_antlr run_nfa_dfa)
 
-# Executables from add_subdirectory(src) are in BINARY_DIR/src/
-set(EXE_PREFIX "${BINARY_DIR}/src")
+set(AST_EXE_PREFIX "${BINARY_DIR}/src/ast")
 function(run_one name)
-  set(exe "${EXE_PREFIX}/${name}")
+  set(exe "${AST_EXE_PREFIX}/${name}")
   if(EXISTS "${exe}")
     message(STATUS "========== Running ${name} ==========")
     execute_process(COMMAND "${exe}" WORKING_DIRECTORY ${BINARY_DIR} RESULT_VARIABLE rv)
     if(rv)
       message(FATAL_ERROR "${name} failed with ${rv}")
     endif()
+  else()
+    message(STATUS "========== Skipping ${name} (not built) ==========")
   endif()
 endfunction()
 

@@ -61,10 +61,12 @@ static ExecGraph stage0_setup() {
   auto &op1 = g.add_op("bn1");
   op1.input_bufs = {b_conv1, b_bn_w};
   op1.output_bufs = {b_bn1};
+  op1.is_elementwise = true;
 
   auto &op2 = g.add_op("relu1");
   op2.input_bufs = {b_bn1};
   op2.output_bufs = {b_relu1};
+  op2.is_elementwise = true;
 
   auto &op3 = g.add_op("conv2");
   op3.input_bufs = {b_relu1, b_w2};
@@ -74,10 +76,12 @@ static ExecGraph stage0_setup() {
   auto &op4 = g.add_op("add (residual)");
   op4.input_bufs = {b_conv2, b_input};
   op4.output_bufs = {b_add};
+  op4.is_elementwise = true;
 
   auto &op5 = g.add_op("relu2");
   op5.input_bufs = {b_add};
   op5.output_bufs = {b_relu2};
+  op5.is_elementwise = true;
 
   std::cout << "  Operators (" << g.ops.size() << "):\n";
   for (auto &op : g.ops) {
@@ -339,54 +343,104 @@ static void stage4_buffer_reuse(
 // P12 Step 5: In-place Optimization
 // =====================================================================
 
-static void stage5_inplace(const ExecGraph &g) {
+enum class InplaceKind { Safe, NeedsConsume, Unsafe };
+
+struct InplaceCandidate {
+  std::string op_name;
+  std::string input_name;
+  std::string output_name;
+  int input_buf_id;
+  int output_buf_id;
+  InplaceKind kind;
+  std::string reason;
+};
+
+static std::vector<InplaceCandidate>
+analyze_inplace(const ExecGraph &g, const std::vector<LiveInterval> &intervals) {
+  std::vector<InplaceCandidate> result;
+
+  for (auto &op : g.ops) {
+    if (!op.is_elementwise) continue;
+    if (op.output_bufs.empty()) continue;
+
+    int out_bid = op.output_bufs[0];
+    auto &out_buf = g.buffers[out_bid];
+
+    for (int in_bid : op.input_bufs) {
+      auto &in_buf = g.buffers[in_bid];
+
+      if (in_buf.is_weight) continue;
+      if (in_buf.size_bytes != out_buf.size_bytes) continue;
+
+      bool last_consumer = (intervals[in_bid].last_use == op.id);
+
+      if (in_buf.is_input || in_buf.is_output) {
+        if (last_consumer) {
+          result.push_back({op.name, in_buf.name, out_buf.name,
+                            in_bid, out_bid, InplaceKind::NeedsConsume,
+                            "last consumer at op" + std::to_string(op.id)
+                            + ", but input is external → safe IF marked consumed"});
+        } else {
+          result.push_back({op.name, in_buf.name, out_buf.name,
+                            in_bid, out_bid, InplaceKind::Unsafe,
+                            "external buffer still live after op" + std::to_string(op.id)});
+        }
+      } else {
+        if (last_consumer) {
+          result.push_back({op.name, in_buf.name, out_buf.name,
+                            in_bid, out_bid, InplaceKind::Safe,
+                            "elementwise, last consumer, same size → safe in-place"});
+        }
+      }
+    }
+  }
+  return result;
+}
+
+static void stage5_inplace(const ExecGraph &g,
+                           const std::vector<LiveInterval> &intervals) {
   sep("Stage 5: In-place Optimization");
 
-  std::cout << "  In-place candidates (output aliases input):\n\n";
+  auto candidates = analyze_inplace(g, intervals);
 
-  struct InplaceCandidate {
-    std::string op_name;
-    std::string input;
-    std::string output;
-    bool safe;
-    std::string reason;
-  };
-
-  std::vector<InplaceCandidate> candidates = {
-    {"relu1",          "bn1_out",   "relu1_out",  true,
-     "elementwise, single consumer, same shape → safe in-place"},
-    {"bn1",            "conv1_out", "bn1_out",    true,
-     "elementwise (inference mode), single consumer → safe in-place"},
-    {"relu2",          "add_out",   "relu2_out",  true,
-     "elementwise, single consumer, same shape → safe in-place"},
-    {"add (residual)", "conv2_out", "add_out",    true,
-     "addf is elementwise, conv2_out not used after → safe"},
-    {"add (residual)", "input",     "add_out",    false,
-     "UNSAFE: input is also used by conv1 (WAR conflict)"},
-  };
+  std::cout << "  In-place analysis (auto-derived from liveness):\n\n";
 
   for (auto &c : candidates) {
-    std::cout << "  " << (c.safe ? "✓" : "✗") << " " << c.op_name
-              << ": " << c.input << " → " << c.output << "\n";
+    const char *icon = "?";
+    switch (c.kind) {
+      case InplaceKind::Safe:         icon = "✓"; break;
+      case InplaceKind::NeedsConsume: icon = "△"; break;
+      case InplaceKind::Unsafe:       icon = "✗"; break;
+    }
+    std::cout << "  " << icon << " " << c.op_name
+              << ": " << c.input_name << " → " << c.output_name << "\n";
     std::cout << "    " << c.reason << "\n\n";
   }
 
-  std::cout << "  In-place safety conditions:\n";
-  std::cout << "    1. Output has same shape and dtype as input\n";
-  std::cout << "    2. Input has no other live consumers after this op\n";
-  std::cout << "    3. No write-after-read conflict (other ops reading input concurrently)\n";
-  std::cout << "    4. Op semantics allow in-place (elementwise, reduction, etc.)\n\n";
+  std::cout << "  Safety conditions checked:\n";
+  std::cout << "    1. Op is elementwise (output can alias input)\n";
+  std::cout << "    2. Input and output have same size\n";
+  std::cout << "    3. Input's last_use == this op (no subsequent consumers)\n";
+  std::cout << "    4. Input is not weight\n";
+  std::cout << "    5. External buffer (is_input/is_output): needs 'consumed' annotation\n\n";
 
-  int64_t inplace_saved = 0;
-  int inplace_count = 0;
+  int safe_count = 0, consume_count = 0;
+  int64_t safe_saved = 0, consume_saved = 0;
   for (auto &c : candidates) {
-    if (c.safe) {
-      inplace_saved += 1 * 64 * 56 * 56 * 4;
-      ++inplace_count;
+    if (c.kind == InplaceKind::Safe) {
+      ++safe_count;
+      safe_saved += g.buffers[c.input_buf_id].size_bytes;
+    } else if (c.kind == InplaceKind::NeedsConsume) {
+      ++consume_count;
+      consume_saved += g.buffers[c.input_buf_id].size_bytes;
     }
   }
-  std::cout << "  In-place rewrites: " << inplace_count << "\n";
-  std::cout << "  Memory saved: " << inplace_saved / 1024 << " KB\n";
+  std::cout << "  Unconditionally safe:    " << safe_count
+            << " rewrites, saves " << safe_saved / 1024 << " KB\n";
+  std::cout << "  Safe if input consumed:  " << consume_count
+            << " rewrites, saves " << consume_saved / 1024 << " KB\n";
+  std::cout << "  Total potential:         " << safe_count + consume_count
+            << " rewrites, saves " << (safe_saved + consume_saved) / 1024 << " KB\n";
 }
 
 // =====================================================================
@@ -461,7 +515,7 @@ int main() {
   auto conflict = stage2_interference(g, intervals);
   auto pool = stage3_offset_planning(g, intervals, conflict);
   stage4_buffer_reuse(g, intervals, conflict);
-  stage5_inplace(g);
+  stage5_inplace(g, intervals);
   stage6_summary(g, pool);
 
   std::cout << "\n========================================================\n";

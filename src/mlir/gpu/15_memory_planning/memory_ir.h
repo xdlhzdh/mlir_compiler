@@ -87,6 +87,7 @@ struct Op {
   std::vector<int> input_bufs;
   std::vector<int> output_bufs;
   int64_t compute_cost = 0;
+  bool is_elementwise = false;
 };
 
 // ======================== Execution Graph ========================
@@ -96,7 +97,7 @@ struct ExecGraph {
   std::vector<BufferReq> buffers;
 
   Op &add_op(const std::string &name) {
-    ops.push_back({static_cast<int>(ops.size()), name, {}, {}, 0});
+    ops.push_back({static_cast<int>(ops.size()), name, {}, {}, 0, false});
     return ops.back();
   }
 

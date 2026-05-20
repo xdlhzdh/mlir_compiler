@@ -101,13 +101,11 @@ export LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-$LLVM_SOURCE_DIR/build}"
 cd "$LLVM_SOURCE_DIR"
 mkdir -p build && cd build
 
-apt install -y protobuf-compiler libprotobuf-dev libantlr4-runtime-dev build-essential libgtest-dev cmake ninja-build gcc g++  python3-dev python3-pip python3-venv
-command -v cmake > /dev/null && command -v ninja >/dev/null && dpkg -l | grep python3-dev >/dev/null && command -v pip > /dev/null && command -v python3 -m venv >/dev/null && echo "toolchain install succeed!" || echo "toolchain install failed!"
+apt install -y protobuf-compiler libprotobuf-dev libantlr4-runtime-dev build-essential libgtest-dev cmake ninja-build gcc g++ python3-dev python3-pip python-is-python3
+command -v cmake > /dev/null && command -v ninja >/dev/null && dpkg -l | grep python3-dev >/dev/null && command -v pip > /dev/null && echo "toolchain install succeed!" || echo "toolchain install failed!"
 
-python3 -m venv /opt/venv
-source /opt/venv/bin/activate
-pip install nanobind
-export nanobind_DIR=$(python -m nanobind --cmake_dir)
+pip install --break-system-packages nanobind numpy onnx
+export nanobind_DIR=$(python3 -m nanobind --cmake_dir)
 
 export CC=gcc
 export CXX=g++
@@ -126,7 +124,7 @@ cmake -G Ninja ../llvm \
 
 ninja
 ninja mlir-tblgen mlir-python-sources (可选)
-ninja install (安装工具链到PATH以及LLVMConfig.cmake/MLIRConfig.cmake到CMAKE_INSTALL_PREFIX)
+ninja install (安装 clang | llvm-config | opt 到 PATH 以及 LLVMConfig.cmake | MLIRConfig.cmake 到 CMAKE_INSTALL_PREFIX)
 ```
 
 安装后把工具链放进 `PATH`：
@@ -135,6 +133,12 @@ ninja install (安装工具链到PATH以及LLVMConfig.cmake/MLIRConfig.cmake到C
 # export并且写入系统环境变量 /etc/profile.d/llvm-mlir.sh（root 写一次）
 export PATH="$LLVM_INSTALL_PREFIX/bin:$PATH"
 echo "export PATH=\"$LLVM_INSTALL_PREFIX/bin:\$PATH\"" | tee -a /etc/profile.d/llvm-mlir.sh
+```
+
+**让非登录 shell 也生效**：`/etc/profile.d/` 默认只在登录 shell 加载，WSL / IDE 终端通常是非登录 shell。取消 `/etc/bash.bashrc` 末尾的注释即可让所有交互式 bash 都加载：
+
+```bash
+sudo sed -i '/^#if \[ -d \/etc\/profile\.d \]/,/^#fi/{s/^#//}' /etc/bash.bashrc
 ```
 
 ### 1.4 在同一前缀下构建并安装 StableHLO（仅当需要编 P5 插件）
@@ -207,8 +211,14 @@ export TORCH_MLIR_BUILD_DIR="$TORCH_MLIR_HOME/build"
 export PYTORCH_CHANNEL="${PYTORCH_CHANNEL:-cpu}"
 
 test -f "$LLVM_BUILD_DIR/lib/cmake/mlir/MLIRConfig.cmake"
-ninja -C "$LLVM_BUILD_DIR"
 ninja -C "$LLVM_BUILD_DIR" mlir-tblgen mlir-python-sources
+
+# torch 必须在 cmake 之前安装——cmake 配置阶段需要 import torch 获取 ABI 和 cmake_prefix_path
+pip install --break-system-packages --extra-index-url "https://download.pytorch.org/whl/${PYTORCH_CHANNEL}" torch
+
+# 用 §1.3 构建好的 Clang 编译 torch-mlir（stablehlo 含 Clang 专用 warning 标志，GCC 会报错）
+export CC=clang
+export CXX=clang++
 
 rm -rf "$TORCH_MLIR_BUILD_DIR"
 cmake -G Ninja -S "$TORCH_MLIR_HOME" -B "$TORCH_MLIR_BUILD_DIR" \
@@ -223,11 +233,6 @@ cmake -G Ninja -S "$TORCH_MLIR_HOME" -B "$TORCH_MLIR_BUILD_DIR" \
   ${EXTRA_TORCH_MLIR_CMAKE_ARGS:-}
 ninja -C "$TORCH_MLIR_BUILD_DIR"
 ninja -C "$TORCH_MLIR_BUILD_DIR" TorchMLIRPythonModules
-
-python -m pip install -U pip
-python -m pip uninstall -y torch torchvision torchaudio
-python -m pip install --index-url "https://download.pytorch.org/whl/${PYTORCH_CHANNEL}" torch torchvision torchaudio
-python -m pip install numpy
 ```
 
 **PYTHONPATH**：
@@ -249,7 +254,7 @@ set_torch_mlir_pythonpath "$TORCH_MLIR_HOME"
 python -c "import torch_mlir._mlir_libs._jit_ir_importer as m; print('jit_ir_importer OK')"
 
 # 可选: 持久化 PYTHONPATH（重开终端后仍生效）
-grep -q 'torch-mlir/build/python_packages/torch_mlir' ~/.bashrc || \
+grep -q 'torch-mlir/build/python_packages/torch_mlir' /etc/profile.d/llvm-mlir.sh || \
   echo "export PYTHONPATH=\"$TORCH_MLIR_HOME/python:$TORCH_MLIR_HOME/projects/pt1/python:$TORCH_MLIR_HOME/build/python_packages/torch_mlir:$TORCH_MLIR_HOME/build/tools/torch-mlir/python_packages/torch_mlir:\$PYTHONPATH\"" >> /etc/profile.d/llvm-mlir.sh
 ```
 
