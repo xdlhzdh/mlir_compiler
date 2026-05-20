@@ -107,7 +107,7 @@ command -v cmake > /dev/null && command -v ninja >/dev/null && dpkg -l | grep py
 python3 -m venv /opt/venv
 source /opt/venv/bin/activate
 pip install nanobind
-export nanobind_DIR=$(python -m nanobind --cmake-dir)
+export nanobind_DIR=$(python -m nanobind --cmake_dir)
 
 export CC=gcc
 export CXX=g++
@@ -134,6 +134,7 @@ ninja install (安装工具链到PATH以及LLVMConfig.cmake/MLIRConfig.cmake到C
 ```bash
 # export并且写入系统环境变量 /etc/profile.d/llvm-mlir.sh（root 写一次）
 export PATH="$LLVM_INSTALL_PREFIX/bin:$PATH"
+echo "export PATH=\"$LLVM_INSTALL_PREFIX/bin:\$PATH\"" | sudo tee -a /etc/profile.d/llvm-mlir.sh
 ```
 
 ### 1.4 在同一前缀下构建并安装 StableHLO（仅当需要编 P5 插件）
@@ -178,6 +179,8 @@ cp -r stablehlo/* "$STABLEHLO_INSTALL_PREFIX/include/stablehlo/" 2>/dev/null || 
 # export并且写入系统环境变量 /etc/profile.d/llvm-mlir.sh（root 写一次）
 # 二选一，让 find_package(MLIR) / find_package(LLVM) 找到 Config.cmake：
 export CMAKE_PREFIX_PATH="$LLVM_INSTALL_PREFIX${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+echo "export CMAKE_PREFIX_PATH=\"$LLVM_INSTALL_PREFIX\${CMAKE_PREFIX_PATH:+:\$CMAKE_PREFIX_PATH}\"" | sudo tee -a /etc/profile.d/llvm-mlir.sh
+# 其实如果使用的是缺省路径,CMAKE_PREFIX_PATH不用设置,cmake也能从系统路径中找到
 # 或者不用 CMAKE_PREFIX_PATH，改用下面两行：
 # export MLIR_DIR="$LLVM_INSTALL_PREFIX/lib/cmake/mlir"
 # export LLVM_DIR="$LLVM_INSTALL_PREFIX/lib/cmake/llvm"
@@ -200,13 +203,8 @@ export CMAKE_PREFIX_PATH="$LLVM_INSTALL_PREFIX${CMAKE_PREFIX_PATH:+:$CMAKE_PREFI
 **重要**：配置 torch-mlir 时 **必须**使用 LLVM 的 **构建目录** `LLVM_BUILD_DIR`，不要用仅安装后的 `/usr/local`（否则 `check-torch-mlir` 会缺 `FileCheck` 等 target）。
 
 ```bash
-export LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-$TORCH_MLIR_HOME/externals/llvm-project/build}"
 export TORCH_MLIR_BUILD_DIR="$TORCH_MLIR_HOME/build"
 export PYTORCH_CHANNEL="${PYTORCH_CHANNEL:-cpu}"
-
-command -v clang >/dev/null && command -v clang++ >/dev/null
-export CC=clang
-export CXX=clang++
 
 test -f "$LLVM_BUILD_DIR/lib/cmake/mlir/MLIRConfig.cmake"
 ninja -C "$LLVM_BUILD_DIR"
@@ -232,7 +230,7 @@ python -m pip install --index-url "https://download.pytorch.org/whl/${PYTORCH_CH
 python -m pip install numpy
 ```
 
-`**PYTHONPATH**`：
+**PYTHONPATH**：
 
 ```bash
 set_torch_mlir_pythonpath() {
