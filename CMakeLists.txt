@@ -66,7 +66,7 @@ if(LLVM_CONFIG)
   set(RUN_HAVE_PASS 1)
 endif()
 
-# run: DOMAIN=ast|pass|(empty=all), PASS=simple_pass when DOMAIN=pass
+# run: DOMAIN=ast|pass|mlir|(empty=ast+pass); PASS=<name> when DOMAIN=pass|mlir (see run_pass.cmake / run_mlir.cmake)
 add_custom_target(
   run
   COMMAND
@@ -76,7 +76,7 @@ add_custom_target(
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   DEPENDS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3
           run_interpreter_v4 run_interpreter_antlr run_nfa_dfa
-  COMMENT "Run (make run [DOMAIN=ast|pass] [PASS=simple_pass])")
+  COMMENT "Run (make run [DOMAIN=ast|pass|mlir] [PASS=<name>])")
 add_custom_target(
   run_ast
   COMMAND ${CMAKE_COMMAND} -DDOMAIN=ast -DBINARY_DIR=${CMAKE_BINARY_DIR} -P

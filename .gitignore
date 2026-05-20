@@ -6,3 +6,6 @@
 /antlr/.antlr/
 /antlr/antlr-*-complete.jar
 /output/
+
+# ReCode local database
+.recode

@@ -11,7 +11,7 @@ src/
 │   ├── cpu/    # CPU/RISC-V 手工 lowering 流水线（独立构建，见 cpu/README.md）
 │   └── gpu/    # AI 编译器 15 阶段全流程（本仓库 CMake 构建）
 ├── pass/       # LLVM Pass 插件（SimplePass 等）
-└── ...         # 解释器 V1-V4、ANTLR、NFA/DFA
+└── ast         # 解释器 V1-V4、ANTLR、NFA/DFA
 ```
 
 ---
@@ -30,12 +30,16 @@ cmake --build . -j$(nproc)
 
 ### 完整构建（含 ONNX 解析与 MLIR Pass）
 
-| 可选依赖 | 启用的阶段 | 安装方式 |
-|---------|-----------|---------|
+| 可选依赖 | 启用的阶段 | 安装 / 配置方式 |
+|---------|-----------|----------------|
 | **Protobuf** | P1–P3（ONNX 解析/前端图优化）、P4（ONNX→StableHLO） | `sudo dnf install protobuf-devel` |
-| **MLIR + StableHLO** | P5（`6_stablehlo_passes`，真实 MLIR Pass 插件 + mlir-opt） | 见 `src/mlir/cpu/README.md` 1.2 节 |
-| **LLVM** | LLVM Pass 插件（SimplePass 等） | `llvm-config` 可用即可 |
+| **MLIR + StableHLO** | P5（`6_stablehlo_passes`，真实 MLIR Pass 插件 + mlir-opt） | 见下方说明；环境安装步骤见 [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) §1.2–1.5 |
+| **LLVM（`llvm-config`）** | `src/pass/` LLVM IR Pass 插件（SimplePass 等） | 安装 LLVM 后 `export PATH="$LLVM_INSTALL_PREFIX/bin:$PATH"`，使 `llvm-config`、`opt` 可用；**与 `-DMLIR_DIR` 无关** |
 | **Python + PyTorch + torch-mlir** | 辅助 P5 的 `4_torch_to_stablehlo/`（PyTorch → StableHLO 导出） | `pip install torch torch-mlir` |
+
+#### P5（`6_stablehlo_passes`）的 MLIR 配置
+
+见 [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) §1.4（StableHLO 安装）、§1.5（让 `mlir_compiler` 找到 MLIR）。找不到 MLIR 时 P5 静默跳过。
 
 ---
 
@@ -183,69 +187,6 @@ cmake --build build --target run_gpu             # 运行 P10
 cmake --build build --target run -- DOMAIN=mlir PASS=linalg
 cmake --build build --target run -- DOMAIN=mlir PASS=gpu_codegen
 ```
-
----
-
-### 传统编译器运行
-
-#### AST / 解释器
-
-```bash
-make run_ast                # 运行全部解释器：V1-V4 + ANTLR + NFA/DFA
-make run DOMAIN=ast         # 等价
-```
-
-#### LLVM Pass 插件
-
-需要系统安装 LLVM（`llvm-config` 可用）：
-
-```bash
-# 运行全部 pass
-make run_pass               # 等价于 make run DOMAIN=pass
-make run DOMAIN=pass
-
-# 运行指定 pass
-make run_simple_pass                       # SimplePass: my-peephole + my-cfg
-make run_remove_trivial_block              # RemoveTrivialBlockPass
-make run_remove_trivial_loop               # RemoveTrivialLoopPass
-make run_remove_zero_trip_loop             # RemoveZeroTripLoopPass
-
-make run DOMAIN=pass PASS=simple_pass      # 等价写法
-make run DOMAIN=pass PASS=remove_trivial_block
-```
-
-等价的手动命令：
-
-```bash
-opt -load-pass-plugin=build/src/pass/SimplePass.so \
-    -passes="my-peephole,my-cfg" \
-    src/pass/simple_pass.ll -S -o build/src/pass/simple_pass_opt.ll
-```
-
-#### 综合运行
-
-```bash
-make run                    # 运行全部（ast + pass，不含 mlir）
-make run DOMAIN=ast         # 只运行 ast 域
-make run DOMAIN=pass        # 只运行 pass 域
-make run DOMAIN=mlir        # 只运行 mlir 域（P1–P12 所有已构建的 target）
-```
-
----
-
-### 测试
-
-```bash
-make test                   # 运行全部测试
-make test_ast               # 只运行 ast 域测试
-make test_pass              # 只运行 pass 域测试
-make run_tests DOMAIN=ast   # 等价于 make test_ast
-make run_tests DOMAIN=pass  # 等价于 make test_pass
-```
-
-Pass 域测试包含：
-- **Pass_SimplePass_Src**：C++ 单元测试（直接调用 `SimplePeepholePass` / `RemoveEmptyBlockPass`，解析 IR 后断言优化结果）
-- **Pass_SimplePass**：端到端脚本测试（opt + SimplePass 插件，校验输出 IR）
 
 ---
 
@@ -425,6 +366,68 @@ mlir-opt --load-pass-plugin=./DialectPass.so \
 | 4 | Buffer Reuse | 枚举可复用的 buffer 对, 潜在节省量 |
 | 5 | In-place Optimization | elementwise op 的输出 alias 输入（WAR 安全性检查） |
 | 6 | Summary | 峰值内存, 压缩比, 碎片率, 高级技术参考 |
+
+---
+
+## 传统编译器运行
+
+本仓库 CMake 构建的传统编译器部分（解释器、ANTLR、NFA/DFA、LLVM IR Pass），与上方 AI 编译器 pipeline 及下方 `src/mlir/cpu/` 手工流水线相互独立。所有命令在 **build 目录**下执行。
+
+### AST / 解释器
+
+```bash
+make run_ast                # 运行全部解释器：V1-V4 + ANTLR + NFA/DFA
+make run DOMAIN=ast         # 等价
+```
+
+### LLVM Pass 插件
+
+依赖 **「完整构建」表中的 LLVM（`llvm-config`）一行**：`llvm-config` 与 `opt` 在 `PATH` 中即可，**不必**传 `-DMLIR_DIR`/`-DLLVM_DIR`。
+
+```bash
+# 运行全部 pass
+make run_pass               # 等价于 make run DOMAIN=pass
+make run DOMAIN=pass
+
+# 运行指定 pass
+make run_simple_pass                       # SimplePass: my-peephole + my-cfg
+make run_remove_trivial_block              # RemoveTrivialBlockPass
+make run_remove_trivial_loop               # RemoveTrivialLoopPass
+make run_remove_zero_trip_loop             # RemoveZeroTripLoopPass
+
+make run DOMAIN=pass PASS=simple_pass      # 等价写法
+make run DOMAIN=pass PASS=remove_trivial_block
+```
+
+等价的手动命令：
+
+```bash
+opt -load-pass-plugin=build/src/pass/SimplePass.so \
+    -passes="my-peephole,my-cfg" \
+    src/pass/simple_pass.ll -S -o build/src/pass/simple_pass_opt.ll
+```
+
+### 综合运行
+
+```bash
+make run                    # 运行全部（ast + pass，不含 mlir）
+make run DOMAIN=ast         # 只运行 ast 域
+make run DOMAIN=pass        # 只运行 pass 域
+```
+
+### 测试
+
+```bash
+make test                   # 运行全部测试
+make test_ast               # 只运行 ast 域测试
+make test_pass              # 只运行 pass 域测试
+make run_tests DOMAIN=ast   # 等价于 make test_ast
+make run_tests DOMAIN=pass  # 等价于 make test_pass
+```
+
+Pass 域测试包含：
+- **Pass_SimplePass_Src**：C++ 单元测试（直接调用 `SimplePeepholePass` / `RemoveEmptyBlockPass`，解析 IR 后断言优化结果）
+- **Pass_SimplePass**：端到端脚本测试（opt + SimplePass 插件，校验输出 IR）
 
 ---
 
