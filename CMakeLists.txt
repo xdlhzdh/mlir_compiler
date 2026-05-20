@@ -45,9 +45,31 @@ else()
 endif()
 
 enable_testing()
-add_subdirectory(antlr)
+
+# ANTLR4 (optional): needed by antlr/ parser lib and run_interpreter_antlr
+find_path(ANTLR4_INCLUDE_DIR NAMES antlr4-runtime.h PATH_SUFFIXES antlr4-runtime)
+find_library(ANTLR4_LIBRARY NAMES antlr4-runtime)
+if(ANTLR4_INCLUDE_DIR AND ANTLR4_LIBRARY)
+  set(HAVE_ANTLR4 TRUE)
+  message(STATUS "ANTLR4 found: ${ANTLR4_LIBRARY}")
+  add_subdirectory(antlr)
+else()
+  set(HAVE_ANTLR4 FALSE)
+  message(STATUS "ANTLR4 not found — antlr parser and run_interpreter_antlr will not be built")
+endif()
+
 add_subdirectory(src)
-add_subdirectory(tests)
+
+# GTest (optional): needed by tests/
+find_package(GTest QUIET)
+if(GTest_FOUND)
+  set(HAVE_GTEST TRUE)
+  message(STATUS "GTest found")
+  add_subdirectory(tests)
+else()
+  set(HAVE_GTEST FALSE)
+  message(STATUS "GTest not found — unit tests will not be built")
+endif()
 
 # Pass UT: script test (opt + plugin)；C++ UT (pass 源码) 在 tests/CMakeLists.txt
 if(LLVM_CONFIG)
@@ -67,6 +89,11 @@ if(LLVM_CONFIG)
 endif()
 
 # run: DOMAIN=ast|pass|mlir|(empty=ast+pass); PASS=<name> when DOMAIN=pass|mlir (see run_pass.cmake / run_mlir.cmake)
+set(_RUN_DEPS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3
+              run_interpreter_v4 run_nfa_dfa)
+if(HAVE_ANTLR4)
+  list(APPEND _RUN_DEPS run_interpreter_antlr)
+endif()
 add_custom_target(
   run
   COMMAND
@@ -74,16 +101,19 @@ add_custom_target(
     ${PROJECT_SOURCE_DIR}/cmake/run.cmake "\$(DOMAIN)" "\$(PASS)"
     ${RUN_HAVE_PASS}
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  DEPENDS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3
-          run_interpreter_v4 run_interpreter_antlr run_nfa_dfa
+  DEPENDS ${_RUN_DEPS}
   COMMENT "Run (make run [DOMAIN=ast|pass|mlir] [PASS=<name>])")
+set(_RUN_AST_DEPS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3
+                  run_interpreter_v4 run_nfa_dfa)
+if(HAVE_ANTLR4)
+  list(APPEND _RUN_AST_DEPS run_interpreter_antlr)
+endif()
 add_custom_target(
   run_ast
   COMMAND ${CMAKE_COMMAND} -DDOMAIN=ast -DBINARY_DIR=${CMAKE_BINARY_DIR} -P
           ${PROJECT_SOURCE_DIR}/cmake/run.cmake
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  DEPENDS run_interpreter_v1 run_interpreter_v2 run_interpreter_v3
-          run_interpreter_v4 run_interpreter_antlr run_nfa_dfa
+  DEPENDS ${_RUN_AST_DEPS}
   COMMENT "Run ast only")
 if(LLVM_CONFIG)
   add_custom_target(

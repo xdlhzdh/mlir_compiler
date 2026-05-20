@@ -101,7 +101,7 @@ export LLVM_BUILD_DIR="${LLVM_BUILD_DIR:-$LLVM_SOURCE_DIR/build}"
 cd "$LLVM_SOURCE_DIR"
 mkdir -p build && cd build
 
-sudo apt install -y build-essential cmake ninja-build gcc g++ python3-dev python3-pip python3-venv
+apt install -y protobuf-compiler libprotobuf-dev libantlr4-runtime-dev build-essential libgtest-dev cmake ninja-build gcc g++  python3-dev python3-pip python3-venv
 command -v cmake > /dev/null && command -v ninja >/dev/null && dpkg -l | grep python3-dev >/dev/null && command -v pip > /dev/null && command -v python3 -m venv >/dev/null && echo "toolchain install succeed!" || echo "toolchain install failed!"
 
 python3 -m venv /opt/venv
@@ -134,7 +134,7 @@ ninja install (安装工具链到PATH以及LLVMConfig.cmake/MLIRConfig.cmake到C
 ```bash
 # export并且写入系统环境变量 /etc/profile.d/llvm-mlir.sh（root 写一次）
 export PATH="$LLVM_INSTALL_PREFIX/bin:$PATH"
-echo "export PATH=\"$LLVM_INSTALL_PREFIX/bin:\$PATH\"" | sudo tee -a /etc/profile.d/llvm-mlir.sh
+echo "export PATH=\"$LLVM_INSTALL_PREFIX/bin:\$PATH\"" | tee -a /etc/profile.d/llvm-mlir.sh
 ```
 
 ### 1.4 在同一前缀下构建并安装 StableHLO（仅当需要编 P5 插件）
@@ -179,7 +179,7 @@ cp -r stablehlo/* "$STABLEHLO_INSTALL_PREFIX/include/stablehlo/" 2>/dev/null || 
 # export并且写入系统环境变量 /etc/profile.d/llvm-mlir.sh（root 写一次）
 # 二选一，让 find_package(MLIR) / find_package(LLVM) 找到 Config.cmake：
 export CMAKE_PREFIX_PATH="$LLVM_INSTALL_PREFIX${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
-echo "export CMAKE_PREFIX_PATH=\"$LLVM_INSTALL_PREFIX\${CMAKE_PREFIX_PATH:+:\$CMAKE_PREFIX_PATH}\"" | sudo tee -a /etc/profile.d/llvm-mlir.sh
+echo "export CMAKE_PREFIX_PATH=\"$LLVM_INSTALL_PREFIX\${CMAKE_PREFIX_PATH:+:\$CMAKE_PREFIX_PATH}\"" | tee -a /etc/profile.d/llvm-mlir.sh
 # 其实如果使用的是缺省路径,CMAKE_PREFIX_PATH不用设置,cmake也能从系统路径中找到
 # 或者不用 CMAKE_PREFIX_PATH，改用下面两行：
 # export MLIR_DIR="$LLVM_INSTALL_PREFIX/lib/cmake/mlir"
@@ -280,8 +280,7 @@ export EXTRA_TORCH_MLIR_CMAKE_ARGS="-DCUDAToolkit_ROOT=$CUDAToolkit_ROOT"
 若仅生成 `matmul_riscv.so` 做反汇编查看，可跳过；要 `**qemu-riscv64 ./matmul_riscv**`，需要完整 sysroot。示例（Ubuntu + riscv-gnu-toolchain）：
 
 ```bash
-sudo apt update
-sudo apt install -y build-essential git \
+apt install -y build-essential git \
   libgmp-dev libmpfr-dev libmpc-dev zlib1g-dev libexpat1-dev \
   bison flex gawk texinfo patchutils python3
 

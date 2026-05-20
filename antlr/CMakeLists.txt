@@ -1,27 +1,5 @@
-cmake_minimum_required(VERSION 3.10)
-project(LangParser)
-
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Try to find ANTLR4 runtime library
-find_path(ANTLR4_INCLUDE_DIR
-    NAMES antlr4-runtime.h
-    PATH_SUFFIXES antlr4-runtime
-)
-
-find_library(ANTLR4_LIBRARY
-    NAMES antlr4-runtime
-)
-
-if(NOT ANTLR4_INCLUDE_DIR)
-    message(FATAL_ERROR "ANTLR4 include directory not found. Please install antlr4-cpp-runtime-devel")
-endif()
-
-if(NOT ANTLR4_LIBRARY)
-    message(FATAL_ERROR "ANTLR4 library not found. Please install antlr4-cpp-runtime-devel")
-endif()
+# ANTLR4_INCLUDE_DIR / ANTLR4_LIBRARY are set by root CMakeLists.txt
+# (this subdirectory is only add_subdirectory'd when both are found)
 
 message(STATUS "ANTLR4 include directory: ${ANTLR4_INCLUDE_DIR}")
 message(STATUS "ANTLR4 library: ${ANTLR4_LIBRARY}")

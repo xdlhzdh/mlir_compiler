@@ -7,6 +7,8 @@
 
 #include "LangParser.h"
 
+#include <mutex>
+
 
 using namespace antlrcpp;
 
@@ -37,7 +39,7 @@ struct LangParserStaticData final {
   std::unique_ptr<antlr4::atn::ATN> atn;
 };
 
-::antlr4::internal::OnceFlag langParserOnceFlag;
+std::once_flag langParserOnceFlag;
 #if ANTLR4_USE_THREAD_LOCAL_CACHE
 static thread_local
 #endif
@@ -3082,6 +3084,6 @@ void LangParser::initialize() {
 #if ANTLR4_USE_THREAD_LOCAL_CACHE
   langParserInitialize();
 #else
-  ::antlr4::internal::call_once(langParserOnceFlag, langParserInitialize);
+  std::call_once(langParserOnceFlag, langParserInitialize);
 #endif
 }

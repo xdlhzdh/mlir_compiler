@@ -4,6 +4,8 @@
 
 #include "LangLexer.h"
 
+#include <mutex>
+
 
 using namespace antlr4;
 
@@ -41,7 +43,7 @@ struct LangLexerStaticData final {
   std::unique_ptr<antlr4::atn::ATN> atn;
 };
 
-::antlr4::internal::OnceFlag langlexerLexerOnceFlag;
+std::once_flag langlexerLexerOnceFlag;
 #if ANTLR4_USE_THREAD_LOCAL_CACHE
 static thread_local
 #endif
@@ -243,6 +245,6 @@ void LangLexer::initialize() {
 #if ANTLR4_USE_THREAD_LOCAL_CACHE
   langlexerLexerInitialize();
 #else
-  ::antlr4::internal::call_once(langlexerLexerOnceFlag, langlexerLexerInitialize);
+  std::call_once(langlexerLexerOnceFlag, langlexerLexerInitialize);
 #endif
 }

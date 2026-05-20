@@ -5,8 +5,10 @@ add_executable(run_interpreter_v2 run_interpreter_v2.cpp)
 add_executable(run_interpreter_v3 run_interpreter_v3.cpp)
 add_executable(run_interpreter_v4 run_interpreter_v4.cpp)
 
-add_executable(run_interpreter_antlr run_interpreter_antlr.cpp)
-target_link_libraries(run_interpreter_antlr lang_parser)
+if(HAVE_ANTLR4)
+  add_executable(run_interpreter_antlr run_interpreter_antlr.cpp)
+  target_link_libraries(run_interpreter_antlr lang_parser)
+endif()
 
 add_executable(run_nfa_dfa run_nfa_dfa.cpp)
 

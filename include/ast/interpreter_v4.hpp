@@ -156,7 +156,7 @@ struct CodeGenContext {
   llvm::Type *i1Ty() { return llvm::Type::getInt1Ty(context); }
   llvm::Type *i32Ty() { return llvm::Type::getInt32Ty(context); }
   llvm::Type *i8PtrTy() {
-    return llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0);
+    return llvm::PointerType::get(context, 0);
   }
 
   void pushScope() { namedValues.emplace_back(); }
@@ -436,7 +436,7 @@ public:
     case ValueType::BOOL:
       return llvm::ConstantInt::get(ctx.i1Ty(), value.toBool() ? 1 : 0);
     case ValueType::STRING:
-      return ctx.builder.CreateGlobalStringPtr(
+      return ctx.builder.CreateGlobalString(
           std::get<std::string>(value.data));
     default:
       return llvm::ConstantFP::get(ctx.doubleTy(), 0.0);
@@ -754,20 +754,20 @@ public:
     if (LiteralExpr *lit = dynamic_cast<LiteralExpr *>(operand.get())) {
       switch (lit->getValue().type) {
       case ValueType::INT:
-        return ctx.builder.CreateGlobalStringPtr("int");
+        return ctx.builder.CreateGlobalString("int");
       case ValueType::DOUBLE:
-        return ctx.builder.CreateGlobalStringPtr("double");
+        return ctx.builder.CreateGlobalString("double");
       case ValueType::STRING:
-        return ctx.builder.CreateGlobalStringPtr("string");
+        return ctx.builder.CreateGlobalString("string");
       case ValueType::BOOL:
-        return ctx.builder.CreateGlobalStringPtr("bool");
+        return ctx.builder.CreateGlobalString("bool");
       case ValueType::FUNCTION:
-        return ctx.builder.CreateGlobalStringPtr("function");
+        return ctx.builder.CreateGlobalString("function");
       default:
-        return ctx.builder.CreateGlobalStringPtr("none");
+        return ctx.builder.CreateGlobalString("none");
       }
     }
-    return ctx.builder.CreateGlobalStringPtr("double");
+    return ctx.builder.CreateGlobalString("double");
   }
 #endif
 };
@@ -962,12 +962,12 @@ public:
         continue;
       llvm::Value *fmt;
       if (v->getType()->isPointerTy()) {
-        fmt = ctx.builder.CreateGlobalStringPtr(i < exprs.size() - 1 ? "%s "
+        fmt = ctx.builder.CreateGlobalString(i < exprs.size() - 1 ? "%s "
                                                                      : "%s\n");
       } else {
         if (v->getType()->isIntegerTy(1))
           v = ctx.builder.CreateUIToFP(v, ctx.doubleTy());
-        fmt = ctx.builder.CreateGlobalStringPtr(i < exprs.size() - 1 ? "%g "
+        fmt = ctx.builder.CreateGlobalString(i < exprs.size() - 1 ? "%g "
                                                                      : "%g\n");
       }
       ctx.builder.CreateCall(printfFunc, {fmt, v});

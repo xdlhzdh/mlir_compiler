@@ -32,7 +32,9 @@ cmake --build . -j$(nproc)
 
 | 可选依赖 | 启用的阶段 | 安装 / 配置方式 |
 |---------|-----------|----------------|
-| **Protobuf** | P1–P3（ONNX 解析/前端图优化）、P4（ONNX→StableHLO） | `sudo dnf install protobuf-devel` |
+| **ANTLR4 C++ runtime** | `run_interpreter_antlr`（ANTLR 解析器） | Ubuntu: `sudo apt install libantlr4-runtime-dev`；Fedora: `sudo dnf install antlr4-cpp-runtime-devel` |
+| **GTest** | `tests/` 单元测试（V1–V4、Pass UT） | Ubuntu: `sudo apt install libgtest-dev`；Fedora: `sudo dnf install gtest-devel` |
+| **Protobuf** | P1–P3（ONNX 解析/前端图优化）、P4（ONNX→StableHLO） | Ubuntu: `sudo apt install libprotobuf-dev`；Fedora: `sudo dnf install protobuf-devel` |
 | **MLIR + StableHLO** | P5（`6_stablehlo_passes`，真实 MLIR Pass 插件 + mlir-opt） | 见下方说明；环境安装步骤见 [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) §1.2–1.5 |
 | **LLVM（`llvm-config`）** | `src/pass/` LLVM IR Pass 插件（SimplePass 等） | 安装 LLVM 后 `export PATH="$LLVM_INSTALL_PREFIX/bin:$PATH"`，使 `llvm-config`、`opt` 可用；**与 `-DMLIR_DIR` 无关** |
 | **Python + PyTorch + torch-mlir** | 辅助 P5 的 `4_torch_to_stablehlo/`（PyTorch → StableHLO 导出） | `pip install torch torch-mlir` |
