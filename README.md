@@ -101,6 +101,8 @@ cmake --build . -j$(nproc)
 | `14_quantization/` | **P11** | 量化 7-Step：校准统计→Scale 计算→量化融合→QLinear 重写→混合精度分析→Speedup 估算 | **无** | `run_quant` |
 | `15_memory_planning/` | **P12** | 内存规划 7-Step：Liveness→干涉图→Offset 分配→Buffer 复用→In-place 优化→峰值分析 | **无** | `run_memplan` |
 
+> `conv_bn_optimized` 跨两个目录：`4_` 的 Python 脚本生成 MLIR，`6_` 的 C++ Pass 插件做 Conv+BN Fusion。
+
 ---
 
 ## 运行命令参考
@@ -108,28 +110,6 @@ cmake --build . -j$(nproc)
 所有命令在 **build 目录**下执行（或从项目根目录使用 `cmake --build build --target <target>`）。
 
 ### AI 编译器各阶段运行
-
-#### Px 与文件夹对照
-
-| Px | 文件夹 | make target |
-|----|--------|-------------|
-| P1 | `1_onnx_parse/` | `run_graph` |
-| P2 | `2_onnx_to_ir/` | `run_graph` |
-| P3 | `3_graph_optimize/` | `run_graph` |
-| — | `4_torch_to_stablehlo/` | `conv_bn_optimized`（Python 导出） |
-| P4 | `5_onnx_to_stablehlo/` | `run_lowering` |
-| P5 | `6_stablehlo_passes/` | `conv_bn_optimized`（MLIR Pass） |
-| P5 | `7_stablehlo_opt/` | `run_shlo_opt` |
-| P6 | `8_linalg_opt/` | `run_linalg` |
-| P7 | `9_bufferize/` | `run_buf` |
-| P8 | `10_scf_affine/` | `run_scf` |
-| P8 | `11_vector/` | `run_vec` |
-| P9 | `12_llvm_lowering/` | `run_llvm_lower` |
-| P10 | `13_gpu_codegen/` | `run_gpu` |
-| P11 | `14_quantization/` | `run_quant` |
-| P12 | `15_memory_planning/` | `run_memplan` |
-
-> `conv_bn_optimized` 跨两个目录：`4_` 的 Python 脚本生成 MLIR，`6_` 的 C++ Pass 插件做 Conv+BN Fusion。
 
 #### 快速入门：逐阶段运行
 
