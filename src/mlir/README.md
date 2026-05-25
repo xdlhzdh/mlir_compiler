@@ -6,10 +6,10 @@
 |---|------------|------------|
 | **在编译器里的角色** | **MLIR 路线的前端 + 全链路分段教学**（原始模型 → L1 前端图 → L2 StableHLO → L3 Linalg/OSB → L4 Loop/Vector/LLVM） | **从 L3 Linalg 起的后端 lowering 实战**（从 **`linalg` on `tensor`** 起，一路到 **LLVM / RISC-V 可执行**） |
 | **你主要练什么** | 模型怎么进 IR、图怎么规范化到 StableHLO、怎么降到 Linalg/Loop/LLVM，各层 Pass **叫什么、顺序如何** | 怎么用 **`mlir-opt` / `mlir-translate` / `llc`** 把 **已有 `.mlir`** 降到 **真实 `.ll` 与二进制** |
-| **IR 形态与进入方式** | **多轨并存**：① 原始输入 — **P1** `.onnx` 解析；② **L1** — **P2/P3** `mini_ir` 图 Pass；③ **L2** — **P4/P5** ONNX/Torch→StableHLO、真实 `stablehlo`（`6`+`mlir-opt`）与 **`shlo_graph`**（`7`）；④ **L3–L4** — **P6–P9** 等 `*_ir` + `run_*`（按 **Px Step** 打印 Pass 链，**不是** `mlir-opt` 跑全程） | **Torch → L3 Linalg**（`matmul.py`）或 **`matmul*.mlir`** + 手工 **`mlir-opt` 命令链** |
+| **IR 形态与进入方式** | **多轨并存**：① 原始输入 — **P1** `.onnx` 解析；② **L1** — **P2/P3** `mini_ir` 图 Pass；③ **L2** — **P4/P5** ONNX/Torch→StableHLO、真实 `stablehlo`（`6`+`mlir-opt`）与 **`shlo_graph`**（`7`）；④ **L3–L4** — **P6–P9** 等 `*_ir` + `run_*`（按 **Px Step** 打印 Pass 链，**不是** `mlir-opt` 跑全程） | **Torch → L3 Linalg**（`matmul.py`）或 **`matmul_l3_*.mlir`** + 手工 **`mlir-opt` 命令链** |
 | **是否进 CMake** | **是**（`add_subdirectory(mlir/gpu)`） | **否**（无 `cpu/CMakeLists.txt`，避免绑死本机 MLIR 路径） |
 | **MLIR 与上游工具** | **P5（`6`）** 真实 StableHLO + `mlir-opt`；**P6–P12** 多为 `*_ir` 教学二进制；**P1–P4** Protobuf / mini_ir / 手写 StableHLO | **全程真实 `.mlir` + `mlir-opt` / `mlir-translate` / `llc`**，可到 **QEMU/RISC-V** |
-| **典型产物** | `run_*` 输出；**P5** 可生成 **`conv_bn_*.mlir`** | **`matmul.mlir` → … → `matmul.ll`**（仓库内） |
+| **典型产物** | `run_*` 输出；**P5** 可生成 **`conv_bn_*.mlir`** | **`matmul_l3_linalg_tensor.mlir` → … → `matmul.ll`**（仓库内） |
 | **与硬件的关系** | 目录名 **gpu** 来自业界「AI/加速器编译器」习惯叫法；**不向 GPU 设备下发 kernel**（**P10** 只讲 PTX/线程映射 **概念**） | **cpu** 指 **通用处理器 codegen 栈**（含 **RISC-V**），不是「只能在笔记本 CPU 上演示」 |
 
 **一句话：** `gpu/` = **把 MLIR 系 AI 编译器从前到后拆开学**；`cpu/` = **假定你已站在 L3 Linalg，专注把 lowering 跑到机器码**。
@@ -25,7 +25,7 @@
 | **入口** | 原始 / 交换图（尚未算作编译器分层） | **ONNX `GraphProto`**（Protobuf）、原始 TorchScript 等 | 读取模型结构、权重、框架导出信息 | `1_onnx_parse/`：只 **读模型结构**，不做图优化 | **不涉及**（无 ONNX 解析示例） |
 | **L1** | **Frontend Graph Layer**（前端图层） | **ONNX Dialect / `mini_ir`**、Torch Dialect 等 | 承接框架图、处理拓扑与框架元数据，并向通用 IR 收拢 | `2`–`3`：Protobuf → **mini_ir** → 图 Pass | 多为 **Torch → Linalg** 一跳到 L3，不展开 L1 文档与脚本 |
 | **L2** | **Tensor Operator Layer / High-Level Math Layer**（张量算子层 / 高级数学层） | **StableHLO Dialect**（以及同级高层张量数学 IR） | 硬件无关的数学执行语义：形状推导、布局传播、常量折叠、图级融合等 | `4`/`5`/`6`/`7`：Torch/ONNX→StableHLO、StableHLO Pass / 优化练习 | 不直接产出 StableHLO；概念上可与 `gpu/` 在 L2→L3 处对接 |
-| **L3** | **Structured Op & Memory Layer**（结构化算子与内存层） | **`linalg` on `tensor` → OSB → `linalg` on `memref`** | 结构化算子、tiling/fusion、bufferization、别名与 in-place 决策 | `8`：Linalg tiling/fusion；`9`：**OSB**（产物仍属 L3） | `matmul.mlir` / `matmul_l2.mlir` / `matmul_buffer.mlir` |
+| **L3** | **Structured Op & Memory Layer**（结构化算子与内存层） | **`linalg` on `tensor` → OSB → `linalg` on `memref`** | 结构化算子、tiling/fusion、bufferization、别名与 in-place 决策 | `8`：Linalg tiling/fusion；`9`：**OSB**（产物仍属 L3） | `matmul_l3_linalg_tensor.mlir` / `matmul_l3_linalg_generic.mlir` / `matmul_l3_linalg_memref.mlir` |
 | **L4** | **Kernel Loop & Vector Layer**（内核循环与矢量层） | **`scf` / `affine` + `memref.load/store`**、`vector`，再接 LLVM Dialect / LLVM IR / 机器码 | 显式循环控制流、向量化、并行映射、后端出码 | `10`–`12`：循环、向量、LLVM；`13`：GPU 映射（概念） | `matmul_llvm.mlir`、`matmul.ll`、`llc`/`clang`、可选 QEMU |
 
 **进入 L4 的判据：** 算子已通过 **`linalg-to-loops`（或同类 lowering Pass）** 展开为 **显式控制流 + 逐元素/逐块访存**，而不是「类型里出现了 `memref`」。
@@ -179,7 +179,7 @@ cmake --build . --target conv_bn_optimized   # P5 (6_stablehlo_passes, 需 MLIR)
 
 1. [cpu/README.md](cpu/README.md)：**环境准备** → **二、流水线**（`src/mlir/cpu` 下执行）。
 2. 可选 **QEMU** 得 `riscv_run.txt`。
-3. 只读 IR：直接打开 `matmul*.mlir`、`matmul.ll`，**无需** 构建 `gpu`。
+3. 只读 IR：直接打开 `matmul_l3_*.mlir`、`matmul_llvm.mlir`、`matmul.ll`，**无需** 构建 `gpu`。
 
 ## 命名小结
 

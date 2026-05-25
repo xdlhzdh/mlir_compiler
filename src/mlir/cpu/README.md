@@ -1,14 +1,33 @@
-# `src/mlir/cpu` — PyTorch → MLIR → RISC-V MatMul 端到端
+# `src/mlir/cpu` — MLIR Linalg 到 LLVM/RISC-V 的后端 Lowering 实验
 
-本目录**不参与**仓库根 CMake（无 `CMakeLists.txt`），用于 **自 L3（`linalg` on `tensor`）起的后端 lowering 实战**：真实 `.mlir`、**mlir-opt**、**LLVM / RISC-V** 直至可执行。与 `**src/mlir/gpu/`**（MLIR 路线 **前端 + L1–L4 分段教学**，由 CMake 构建）的分工见 **[../README.md](../README.md)**。
+本目录用于演示一条以矩阵乘法为核心的 MLIR 后端 lowering 流水线：从 PyTorch/torch-mlir 导出的 `linalg` on `tensor` IR 出发，依次经过 Linalg 规范化、One-Shot Bufferize、循环/LLVM Dialect lowering、LLVM IR 生成以及 RISC-V 目标代码生成。它**不参与**仓库根 CMake（无 `CMakeLists.txt`），运行方式以手工执行 `mlir-opt`、`mlir-translate`、`llc`、`clang` 为主。
 
-本文档分为两个部分：
+与 `src/mlir/gpu/` 的分工见 [../README.md](../README.md)：`gpu/` 承担 MLIR 路线的前端与 L1–L4 分段教学，并由 CMake 构建；`cpu/` 则假定已经进入 L3 `linalg`，重点观察结构化算子如何逐步落到 LLVM/RISC-V 后端。
 
+## 与 `src/pass` 的关系
 
-| 部分           | 内容                                                                                |
-| ------------ | --------------------------------------------------------------------------------- |
-| **环境准备**     | 一次性的工具链：LLVM/MLIR、StableHLO（供 `gpu/` L2 / P5）、torch-mlir、可选 CUDA / RISC-V sysroot |
-| **代码运行与流水线** | 在 `src/mlir/cpu` 下跑 matmul：导出 IR → `mlir-opt` → LLVM → 仿真                         |
+`src/mlir/cpu` **不是** `src/pass` 的输入目录，也不用于驱动 `SimplePass.so`。二者属于不同实验线：
+
+| 目录 | 输入 / IR | 主要工具 | 目标 |
+|------|-----------|----------|------|
+| `src/mlir/cpu` | `matmul_l3_*.mlir`、`matmul_llvm.mlir`、`matmul.ll` | `mlir-opt`、`mlir-translate`、`llc`、`clang` | 展示 MLIR `linalg` → bufferize → loops / LLVM Dialect → LLVM IR → RISC-V 的后端 lowering 流程 |
+| `src/pass` | `simple_pass.ll`、`remove_*.ll` | `opt -load-pass-plugin=...` | 验证 LLVM IR 层的自定义函数 Pass，例如 peephole、CFG 简化、trivial block / loop 删除 |
+
+因此，不建议把 `cpu/` 与 `src/pass/` 合并。`cpu/` 的核心材料是 MLIR 文件和后端 codegen 命令；`src/pass/` 的核心材料是 LLVM IR 测试文件和 `opt` 插件。二者可以在概念上前后衔接（MLIR 最终会生成 LLVM IR），但仓库当前并未提供从 `cpu/matmul.ll` 自动接入 `src/pass` 插件的一体化流水线。
+
+## 本目录目标
+
+- 验证 torch-mlir 能将简单 PyTorch `matmul` 导出为 L3 `linalg` on `tensor` IR。
+- 观察 L3 内部的 Linalg 规范化与 One-Shot Bufferize，并明确 OSB 仍属于结构化算子层的类型落地阶段。
+- 演示从 L3 进入 L4 的关键边界：`convert-linalg-to-loops` 生成显式循环与 `memref` 访存。
+- 生成 LLVM Dialect、LLVM IR、RISC-V 目标文件，并在具备 sysroot 时通过 QEMU 验证执行结果。
+
+## 文档结构
+
+| 部分 | 内容 |
+|------|------|
+| **环境准备** | 一次性配置 LLVM/MLIR、StableHLO（供 `gpu/` L2 / P5）、torch-mlir、可选 CUDA / RISC-V sysroot |
+| **代码运行与流水线** | 在 `src/mlir/cpu` 下运行 matmul：导出 IR → `mlir-opt` → LLVM IR → RISC-V 目标代码 / 仿真 |
 
 
 ---
@@ -52,9 +71,9 @@ PyTorch
 
 - **L1 — Frontend Graph Layer**：ONNX Dialect / `mini_ir`、**Torch Dialect** 等，负责承接框架图、拓扑与元数据。
 - **L2 — Tensor Operator / High-Level Math Layer**：**StableHLO**，更接近硬件无关的纯数学张量算子 IR，适合形状推导、布局传播、常量折叠、图级融合等。
-- **L3 — Structured Op & Memory Layer**：`**linalg` on `tensor` → OSB → `linalg` on `memref`**。**降到 `linalg` on `tensor` 才进入 L3**（**P6** / `8_linalg_opt`）。勿与 **P4 内部的 tier 1/2/3**（难度分级）混淆。
+- **L3 — Structured Op & Memory Layer**：**`linalg` on `tensor` → OSB → `linalg` on `memref`**。**降到 `linalg` on `tensor` 才进入 L3**（**P6** / `8_linalg_opt`）。勿与 **P4 内部的 tier 1/2/3**（难度分级）混淆。
 - **Torch Dialect**：**torch-mlir** 表示 **PyTorch 侧算子** 的 MLIR 方言，属于 L1 前端图语义，不是 StableHLO（不同 op 集合与规范：OpenXLA vs PyTorch 映射）。
-- **本示例 `matmul.py`**：`output_type="linalg-on-tensors"` 会沿 torch-mlir **尽快落到 L3**，中间可能短暂经过 Torch 相关 IR，**通常不生成** 供对照阅读的 **StableHLO 文本**。要看 **StableHLO 导出 + L2 高级张量算子 Pass**，用 `**src/mlir/gpu/`**（如 `conv_bn_model.py`）。
+- **本示例 `matmul.py`**：`output_type="linalg-on-tensors"` 会沿 torch-mlir **尽快落到 L3**，中间可能短暂经过 Torch 相关 IR，**通常不生成** 供对照阅读的 **StableHLO 文本**。要看 **StableHLO 导出 + L2 高级张量算子 Pass**，用 `src/mlir/gpu/`（如 `conv_bn_model.py`）。
 - **L2 → L3 汇合**：**StableHLO → `linalg` on `tensor`**（也可能先经 **TOSA** 等，视编译器而定），与本文 **Torch → Linalg** **在 L3 汇合**；之后 **OSB（仍 L3）→ `linalg-to-loops`（进 L4）→ LLVM Dialect** 等与 **[../README.md](../README.md)** 中 **「L3→L4 Pass 速查」** 一致。接 GPU 时 **L4 后半段** 仍会再分叉，命令流与 `cpu/` 不完全相同。
 
 **本仓库步骤 ↔ 分层（速查）**
@@ -259,7 +278,7 @@ grep -q 'torch-mlir/build/python_packages/torch_mlir' /etc/profile.d/llvm-mlir.s
 ```
 
 **注意**：若报错信息类似
-`The dependency target "FileCheck" of target "check-torch-mlir" does not exist`，多半是 torch-mlir 的 `MLIR_DIR` / `LLVM_DIR` 指到了 LLVM **安装目录**（如 `/usr/local`），而不是 **构建目录**。应改为使用 `**$TORCH_MLIR_HOME/externals/llvm-project/build`**，删掉 torch-mlir 的 build 目录后重新 `cmake` + `ninja`：
+`The dependency target "FileCheck" of target "check-torch-mlir" does not exist`，多半是 torch-mlir 的 `MLIR_DIR` / `LLVM_DIR` 指到了 LLVM **安装目录**（如 `/usr/local`），而不是 **构建目录**。应改为使用 `$TORCH_MLIR_HOME/externals/llvm-project/build`，删掉 torch-mlir 的 build 目录后重新 `cmake` + `ninja`：
 
 ```bash
 export LLVM_BUILD_DIR="$TORCH_MLIR_HOME/externals/llvm-project/build"
@@ -282,7 +301,7 @@ export EXTRA_TORCH_MLIR_CMAKE_ARGS="-DCUDAToolkit_ROOT=$CUDAToolkit_ROOT"
 
 ### 1.8 RISC-V sysroot（可选：要链接出可 QEMU 的 ELF 时）
 
-若仅生成 `matmul_riscv.so` 做反汇编查看，可跳过；要 `**qemu-riscv64 ./matmul_riscv**`，需要完整 sysroot。示例（Ubuntu + riscv-gnu-toolchain）：
+若仅生成 `matmul_riscv.so` 做反汇编查看，可跳过；要运行 `qemu-riscv64 ./matmul_riscv`，需要完整 sysroot。示例（Ubuntu + riscv-gnu-toolchain）：
 
 ```bash
 apt install -y build-essential git \
@@ -303,7 +322,7 @@ test -f /opt/riscv/sysroot/usr/lib/libc.so
 
 ## 二、代码运行与流水线
 
-> **前置**：`mlir-opt`、`mlir-translate`、`llc`、`clang` 在 `PATH`（来自 §1.3）。若需用 `**matmul.py`** 生成入口 IR，还需完成 **§1.6** 的 Python/torch-mlir。
+> **前置**：`mlir-opt`、`mlir-translate`、`llc`、`clang` 在 `PATH`（来自 §1.3）。若需用 `matmul.py` 生成入口 IR，还需完成 **§1.6** 的 Python/torch-mlir。
 
 ### 2.1 工作目录
 
@@ -318,10 +337,10 @@ cd /path/to/mlir_compiler/src/mlir/cpu
 `[matmul.py](matmul.py)` 核心：用 `torchscript.compile(..., output_type="linalg-on-tensors")` 得到带 `linalg.matmul` 的 MLIR。
 
 ```bash
-python matmul.py > matmul.mlir
+python matmul.py > matmul_l3_linalg_tensor.mlir
 ```
 
-期望在 `matmul.mlir` 中看到类似：
+期望在 `matmul_l3_linalg_tensor.mlir` 中看到类似：
 
 ```mlir
 linalg.matmul ins(%arg0, %arg1 : tensor<4x4xf32>, tensor<4x4xf32>)
@@ -331,10 +350,10 @@ linalg.matmul ins(%arg0, %arg1 : tensor<4x4xf32>, tensor<4x4xf32>)
 ### 2.3 L3：Linalg 规范化（tensor）
 
 ```bash
-mlir-opt matmul.mlir \
+mlir-opt matmul_l3_linalg_tensor.mlir \
   --linalg-generalize-named-ops \
   --canonicalize \
-  > matmul_l2.mlir
+  > matmul_l3_linalg_generic.mlir
 ```
 
 这里**没有显式做 tiling**。当前示例选择的是一条**最小可读**流水线：先把 `linalg.matmul` 规整到更通用的 L3 形态，再经 bufferize 和循环 lowering 走到 LLVM。
@@ -346,16 +365,16 @@ mlir-opt matmul.mlir \
 **语义**：**bufferize（缓冲化）** 的核心工作是把 IR 里的 `tensor`（值语义）转换为 `memref`（显式内存块），并插入/整理分配与释放（`-buffer-deallocation-pipeline` 负责生命周期管理）。在分层上它是 L3 内的类型落地 Pass（OSB，见 [../README.md](../README.md)）：重点在于决定缓冲区如何落地、哪些结果可原地更新、哪些必须新分配；产物仍是 L3 结构化算子（`linalg` on `memref`），还不是进入 L4 的标志——须经 `-convert-linalg-to-loops` 才生成显式循环。**注意**：bufferize **不是**「把整个 Linalg 方言替换成 memref 方言」——`memref` 只是**类型/内存抽象**，算子仍可能是 `linalg` on `memref`，或在后续 pass 中进一步拆成 `memref.load`/`store` + 循环。
 
 ```bash
-mlir-opt matmul_l2.mlir \
+mlir-opt matmul_l3_linalg_generic.mlir \
   --one-shot-bufferize="bufferize-function-boundaries" \
   -buffer-deallocation-pipeline \
-  > matmul_buffer.mlir
+  > matmul_l3_linalg_memref.mlir
 ```
 
 ### 2.5 L4：展开循环并 Lowering 到 LLVM Dialect
 
 ```bash
-mlir-opt matmul_buffer.mlir \
+mlir-opt matmul_l3_linalg_memref.mlir \
   -convert-bufferization-to-memref \
   -convert-linalg-to-loops \
   -convert-scf-to-cf \
@@ -418,7 +437,7 @@ spike pk matmul_riscv
 可在本目录保存为 `pipeline.sh` 并执行：
 
 ```bash
-mlir-opt matmul.mlir \
+mlir-opt matmul_l3_linalg_tensor.mlir \
   --linalg-generalize-named-ops \
   --canonicalize \
   --one-shot-bufferize="bufferize-function-boundaries" \
@@ -445,19 +464,22 @@ mlir-opt matmul.mlir \
 ## 三、本目录文件（速查）
 
 
-| 文件                           | 作用                               |
-| ---------------------------- | -------------------------------- |
-| `matmul.py`                  | PyTorch → Linalg-on-tensors MLIR |
-| `driver_main.c`              | 与 `matmul.o` 链接、调用 kernel        |
-| `matmul*.mlir` / `matmul.ll` | 流水线中间产物（部分已提交示例）                 |
+| 文件 | 作用 |
+|------|------|
+| `matmul.py` | PyTorch → Linalg-on-tensors MLIR |
+| `driver_main.c` | 与 `matmul.o` 链接、调用 kernel |
+| `matmul_l3_linalg_tensor.mlir` | L3 `linalg` on `tensor` 入口 IR，由 `matmul.py` 导出 |
+| `matmul_l3_linalg_generic.mlir` | L3 tensor 形态，经 named op generalization / canonicalization 后的 `linalg.generic` IR |
+| `matmul_l3_linalg_memref.mlir` | L3 bufferized 形态，`tensor` 已落到 `memref`，但仍保留结构化 `linalg` 算子 |
+| `matmul_llvm.mlir` / `matmul.ll` | L4 后端 lowering 产物：LLVM Dialect 与 LLVM IR |
 
 
 ---
 
 ## 四、文档维护说明
 
-- **权威正文**：以本文档 `**src/mlir/cpu/README.md`** 为准（环境准备 / 代码运行业已分区）。
-- `**docs/MLIR端到端实战指南.md`**：保留为**跳转页**，避免旧链接失效。
+- **权威正文**：以本文档 `src/mlir/cpu/README.md` 为准（环境准备 / 代码运行业已分区）。
+- `docs/MLIR端到端实战指南.md`：保留为**跳转页**，避免旧链接失效。
 
 若你使用 CUDA 版 PyTorch 却缺少本机 CUDA，可能出现：
 
