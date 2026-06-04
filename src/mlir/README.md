@@ -26,7 +26,7 @@
 | **L1** | **Frontend Graph Layer**（前端图层） | **ONNX Dialect / `mini_ir`**、Torch Dialect 等 | 承接框架图、处理拓扑与框架元数据，并向通用 IR 收拢 | `2`–`3`：Protobuf → **mini_ir** → 图 Pass | 多为 **Torch → Linalg** 一跳到 L3，不展开 L1 文档与脚本 |
 | **L2** | **Tensor Operator Layer / High-Level Math Layer**（张量算子层 / 高级数学层） | **StableHLO Dialect**（以及同级高层张量数学 IR） | 硬件无关的数学执行语义：形状推导、布局传播、常量折叠、图级融合等 | `4`/`5`/`6`/`7`：Torch/ONNX→StableHLO、StableHLO Pass / 优化练习 | 不直接产出 StableHLO；概念上可与 `gpu/` 在 L2→L3 处对接 |
 | **L3** | **Structured Op & Memory Layer**（结构化算子与内存层） | **`linalg` on `tensor` → OSB → `linalg` on `memref`** | 结构化算子、tiling/fusion、bufferization、别名与 in-place 决策 | `8`：Linalg tiling/fusion；`9`：**OSB**（产物仍属 L3） | `matmul_l3_linalg_tensor.mlir` / `matmul_l3_linalg_generic.mlir` / `matmul_l3_linalg_memref.mlir` |
-| **L4** | **Kernel Loop & Vector Layer**（内核循环与矢量层） | **`scf` / `affine` + `memref.load/store`**、`vector`，再接 LLVM Dialect / LLVM IR / 机器码 | 显式循环控制流、向量化、并行映射、后端出码 | `10`–`12`：循环、向量、LLVM；`13`：GPU 映射（概念） | `matmul_llvm.mlir`、`matmul.ll`、`llc`/`clang`、可选 QEMU |
+| **L4** | **Kernel Loop & Vector Layer**（内核循环与向量层） | **`scf` / `affine` + `memref.load/store`**、`vector`，再接 LLVM Dialect / LLVM IR / 机器码 | 显式循环控制流、向量化、并行映射、后端出码 | `10`–`12`：循环、向量、LLVM；`13`：GPU 映射（概念） | `matmul_llvm.mlir`、`matmul.ll`、`llc`/`clang`、可选 QEMU |
 
 **进入 L4 的判据：** 算子已通过 **`linalg-to-loops`（或同类 lowering Pass）** 展开为 **显式控制流 + 逐元素/逐块访存**，而不是「类型里出现了 `memref`」。
 
