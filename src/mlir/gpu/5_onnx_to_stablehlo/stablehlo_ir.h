@@ -228,6 +228,63 @@ public:
     return {name, operand.type};
   }
 
+  Value emit_sine(const Value &operand) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.sine " << operand.name << " : " << operand.type.str();
+    append({"stablehlo.sine", name, operand.type, a.str()});
+    return {name, operand.type};
+  }
+
+  Value emit_cosine(const Value &operand) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.cosine " << operand.name << " : " << operand.type.str();
+    append({"stablehlo.cosine", name, operand.type, a.str()});
+    return {name, operand.type};
+  }
+
+  // ---- stablehlo.slice ----
+
+  Value emit_slice(const Value &operand,
+                   const std::vector<int64_t> &start_indices,
+                   const std::vector<int64_t> &limit_indices,
+                   const std::vector<int64_t> &strides,
+                   const TensorType &result_type) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.slice " << operand.name << " [";
+    for (size_t i = 0; i < start_indices.size(); ++i) {
+      if (i) a << ", ";
+      a << start_indices[i] << ":" << limit_indices[i];
+      if (strides[i] != 1) a << ":" << strides[i];
+    }
+    a << "] : (" << operand.type.str() << ") -> " << result_type.str();
+    append({"stablehlo.slice", name, result_type, a.str()});
+    return {name, result_type};
+  }
+
+  // ---- stablehlo.concatenate ----
+
+  Value emit_concatenate(const std::vector<Value> &operands, int64_t dimension,
+                         const TensorType &result_type) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.concatenate ";
+    for (size_t i = 0; i < operands.size(); ++i) {
+      if (i) a << ", ";
+      a << operands[i].name;
+    }
+    a << ", dim = " << dimension << " : (";
+    for (size_t i = 0; i < operands.size(); ++i) {
+      if (i) a << ", ";
+      a << operands[i].type.str();
+    }
+    a << ") -> " << result_type.str();
+    append({"stablehlo.concatenate", name, result_type, a.str()});
+    return {name, result_type};
+  }
+
   // ---- stablehlo.reduce ----
 
   Value emit_reduce(const Value &operand, const Value &init,

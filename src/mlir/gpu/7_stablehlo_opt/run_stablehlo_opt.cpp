@@ -597,8 +597,86 @@ static int pass_transpose_push(Graph &g) {
   return count;
 }
 
+static const std::vector<int64_t> kNchwToNhwcPerm = {0, 2, 3, 1};
+static const std::vector<int64_t> kNhwcToNchwPerm = {0, 3, 1, 2};
+
+static bool is_perm(const std::vector<int64_t> &p,
+                    const std::vector<int64_t> &expected) {
+  return p == expected;
+}
+
+static TensorType permute_dims(const TensorType &t,
+                               const std::vector<int64_t> &perm) {
+  TensorType out = t;
+  if (static_cast<int64_t>(perm.size()) != t.rank()) return out;
+  out.dims.resize(t.rank());
+  for (size_t i = 0; i < perm.size(); ++i)
+    out.dims[i] = t.dims[perm[i]];
+  return out;
+}
+
+// Conv(NCHW) → transpose[0,2,3,1] → NHWC: fold layout into conv output.
+static int pass_nchw_nhwc_layout(Graph &g) {
+  int count = 0;
+  for (size_t i = 0; i < g.ops.size(); ++i) {
+    auto *op = g.ops[i].get();
+    if (op->mnemonic != "stablehlo.transpose" || !op->has_attr("permutation"))
+      continue;
+    auto perm = op->get_attr<std::vector<int64_t>>("permutation");
+    if (!is_perm(perm, kNchwToNhwcPerm))
+      continue;
+
+    auto *conv = op->operand(0)->defining_op;
+    if (!conv || conv->mnemonic != "stablehlo.convolution")
+      continue;
+    if (conv->result()->users.size() != 1)
+      continue;
+
+    conv->result()->type = permute_dims(conv->result()->type, perm);
+    conv->attrs["layout"] = std::string("NHWC");
+    std::cout << "  [Layout] fused NCHW conv " << conv->result()->name
+              << " + transpose → direct NHWC output\n";
+    g.replace_all_uses(op->result(), conv->result());
+    g.erase_op(op);
+    ++count;
+  }
+  return count;
+}
+
+// transpose[0,3,1,2] → Conv(NCHW): fold input layout conversion into conv.
+static int pass_nhwc_nchw_layout(Graph &g) {
+  int count = 0;
+  for (size_t i = 0; i < g.ops.size(); ++i) {
+    auto *conv = g.ops[i].get();
+    if (conv->mnemonic != "stablehlo.convolution" || conv->num_operands() < 1)
+      continue;
+
+    auto *in_transpose = conv->operand(0)->defining_op;
+    if (!in_transpose || in_transpose->mnemonic != "stablehlo.transpose" ||
+        !in_transpose->has_attr("permutation"))
+      continue;
+
+    auto perm = in_transpose->get_attr<std::vector<int64_t>>("permutation");
+    if (!is_perm(perm, kNhwcToNchwPerm))
+      continue;
+    if (in_transpose->result()->users.size() != 1)
+      continue;
+
+    conv->attrs["input_layout"] = std::string("NHWC");
+    std::cout << "  [Layout] fused NHWC input transpose into conv "
+              << conv->result()->name << "\n";
+    Value *nchw_input = in_transpose->operand(0);
+    g.replace_all_uses(in_transpose->result(), nchw_input);
+    if (in_transpose->result()->has_no_uses())
+      g.erase_op(in_transpose);
+    ++count;
+  }
+  return count;
+}
+
 static int stage4_layout_opt(Graph &g) {
-  return pass_transpose_elim(g) + pass_transpose_push(g);
+  return pass_transpose_elim(g) + pass_transpose_push(g) +
+         pass_nchw_nhwc_layout(g) + pass_nhwc_nchw_layout(g);
 }
 
 // =====================================================================
@@ -743,6 +821,35 @@ static Graph make_test_stage4() {
   auto *a = g.add_op("stablehlo.add", {t3->result(), t4->result()}, {T_t2});
 
   g.returns = {a->result()};
+  return g;
+}
+
+static Graph make_test_nchw_nhwc_layout() {
+  Graph g;
+  g.name = "test_nchw_nhwc";
+  TensorType T_in{{1, 3, 8, 8}, ElemType::F32};
+  TensorType T_w{{16, 3, 3, 3}, ElemType::F32};
+  TensorType T_nchw{{1, 16, 6, 6}, ElemType::F32};
+  TensorType T_nhwc{{1, 6, 6, 16}, ElemType::F32};
+  TensorType T_nhwc_in{{1, 8, 8, 3}, ElemType::F32};
+
+  auto *x = g.add_arg(T_in);
+  auto *w = g.add_constant_f(T_w, std::vector<float>(432, 0.01f));
+  auto *conv = g.add_op("stablehlo.convolution", {x, w->result()}, {T_nchw},
+                        {{"window_strides", std::vector<int64_t>{1, 1}},
+                         {"padding", std::vector<int64_t>{0, 0, 0, 0}}});
+  auto *to_nhwc = g.add_op("stablehlo.transpose", {conv->result()}, {T_nhwc},
+                           {{"permutation", kNchwToNhwcPerm}});
+
+  auto *nhwc_in = g.add_arg(T_nhwc_in);
+  auto *to_nchw = g.add_op("stablehlo.transpose", {nhwc_in}, {T_in},
+                           {{"permutation", kNhwcToNchwPerm}});
+  auto *conv2 = g.add_op("stablehlo.convolution", {to_nchw->result(), w->result()},
+                         {T_nchw},
+                         {{"window_strides", std::vector<int64_t>{1, 1}},
+                          {"padding", std::vector<int64_t>{0, 0, 0, 0}}});
+
+  g.returns = {to_nhwc->result(), conv2->result()};
   return g;
 }
 
@@ -932,7 +1039,9 @@ static void run_pipeline(Graph &g, const char *label, bool per_pass = false) {
 
   sep("Stage 4: Layout / Transpose");
   c = run("transpose_elim", pass_transpose_elim)
-    + run("transpose_push", pass_transpose_push);
+    + run("transpose_push", pass_transpose_push)
+    + run("nchw_nhwc_layout", pass_nchw_nhwc_layout)
+    + run("nhwc_nchw_layout", pass_nhwc_nchw_layout);
   total += c;
   if (!per_pass) { std::cout << "  → " << c << " rewrites\n"; if (c) g.print(std::cout); }
 
@@ -968,6 +1077,7 @@ int main() {
       {"Stage 3: Graph Opt (CSE + DCE + ConstFold + Fusion)",
        make_test_stage3},
       {"Stage 4: Layout / Transpose (elim + push)", make_test_stage4},
+      {"Stage 4b: NCHW↔NHWC layout fold", make_test_nchw_nhwc_layout},
       {"Stage 6: Legalization (stablehlo -> linalg)", make_test_stage6},
       {"Full Pipeline (all stages combined)", make_test_full},
   };

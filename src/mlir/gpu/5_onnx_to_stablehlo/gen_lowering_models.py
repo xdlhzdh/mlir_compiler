@@ -15,6 +15,7 @@ Models:
     lowering_softmax.onnx           — Softmax(axis=-1) decomposition
     lowering_attention.onnx         — Scaled dot-product attention subgraph
     lowering_rmsnorm.onnx           — RMSNorm decomposition
+    lowering_rope.onnx              — RoPE (rotate_half + sin/cos) decomposition
 """
 
 from pathlib import Path
@@ -206,6 +207,61 @@ def make_lowering_rmsnorm(out_dir):
     _save(m, "lowering_rmsnorm.onnx", out_dir)
 
 
+def make_lowering_rope(out_dir):
+    """X(1,2,4) + precomputed cos/sin(1,2,4) → RoPE via rotate_half decomposition.
+    out = X * cos + rotate_half(X) * sin
+    rotate_half: concat(-X[..., d/2:], X[..., :d/2]) on last axis."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 2, 4])
+
+    seq, dim = 2, 4
+    pos = np.arange(seq, dtype=np.float32)
+    inv_freq = 1.0 / (10000.0 ** (np.arange(0, dim, 2, dtype=np.float32) / dim))
+    angles = np.outer(pos, inv_freq)
+    angles_full = np.repeat(angles, 2, axis=1)
+    cos = np.cos(angles_full).reshape(1, seq, dim).astype(np.float32)
+    sin = np.sin(angles_full).reshape(1, seq, dim).astype(np.float32)
+
+    cos_init = numpy_helper.from_array(cos, "cos")
+    sin_init = numpy_helper.from_array(sin, "sin")
+    neg_one = numpy_helper.from_array(np.array(-1.0, dtype=np.float32), "neg_one")
+    starts_left = numpy_helper.from_array(
+        np.array([0, 0, 0], dtype=np.int64), "starts_left")
+    ends_left = numpy_helper.from_array(
+        np.array([1, 2, 2], dtype=np.int64), "ends_left")
+    starts_right = numpy_helper.from_array(
+        np.array([0, 0, 2], dtype=np.int64), "starts_right")
+    ends_right = numpy_helper.from_array(
+        np.array([1, 2, 4], dtype=np.int64), "ends_right")
+    axes = numpy_helper.from_array(
+        np.array([0, 1, 2], dtype=np.int64), "slice_axes")
+
+    slice_left = helper.make_node(
+        "Slice", ["X", "starts_left", "ends_left", "slice_axes"],
+        ["x_left"], name="rope_slice_left")
+    slice_right = helper.make_node(
+        "Slice", ["X", "starts_right", "ends_right", "slice_axes"],
+        ["x_right"], name="rope_slice_right")
+    neg_right = helper.make_node(
+        "Mul", ["x_right", "neg_one"], ["neg_right"], name="rope_neg")
+    x_rot = helper.make_node(
+        "Concat", ["neg_right", "x_left"], ["x_rot"],
+        name="rope_rotate", axis=2)
+    x_cos = helper.make_node("Mul", ["X", "cos"], ["x_cos"], name="rope_x_cos")
+    rot_sin = helper.make_node(
+        "Mul", ["x_rot", "sin"], ["rot_sin"], name="rope_rot_sin")
+    out = helper.make_node("Add", ["x_cos", "rot_sin"], ["Y"], name="rope_out")
+
+    inits = [cos_init, sin_init, neg_one, starts_left, ends_left,
+             starts_right, ends_right, axes]
+    graph = helper.make_graph(
+        [slice_left, slice_right, neg_right, x_rot, x_cos, rot_sin, out],
+        "rope", [X], [Y], initializer=inits)
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_rope.onnx", out_dir)
+
+
 def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -219,6 +275,7 @@ def main():
     make_lowering_softmax(out_dir)
     make_lowering_attention(out_dir)
     make_lowering_rmsnorm(out_dir)
+    make_lowering_rope(out_dir)
     print("Done.")
 
 

@@ -121,6 +121,12 @@ if(Protobuf_FOUND)
       -P ${CMAKE_CURRENT_BINARY_DIR}/run_lowering.cmake
     DEPENDS run_lowering_l1 run_lowering_l2 run_lowering_l3 gen_lowering_models
     COMMENT "Running full P4 ONNX→StableHLO lowering (tiers 1+2+3)")
+
+  add_custom_target(run_golden
+    COMMAND ${Python3_EXECUTABLE}
+      ${ONNX_TO_STABLEHLO_DIR}/run_lowering_golden.py ${LOWERING_MODEL_DIR}
+    DEPENDS gen_lowering_models
+    COMMENT "Running P4 golden numerical checks (ONNX Runtime vs NumPy)")
 else()
   message(WARNING "Protobuf not found. P1~P3 targets will not be built.")
 endif()
@@ -215,6 +221,26 @@ set(QUANT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/14_quantization)
 add_executable(run_quantization ${QUANT_DIR}/run_quantization.cpp)
 target_include_directories(run_quantization PRIVATE ${QUANT_DIR})
 target_compile_features(run_quantization PRIVATE cxx_std_17)
+
+if(Protobuf_FOUND)
+  target_sources(run_quantization PRIVATE ${QUANT_DIR}/onnx_qdq_import.cpp)
+  target_include_directories(run_quantization PRIVATE ${COMMON_DIR})
+  target_link_libraries(run_quantization onnx_proto)
+  target_compile_definitions(run_quantization PRIVATE QUANT_ONNX_QDQ=1)
+
+  set(QUANT_MODEL_DIR ${CMAKE_CURRENT_BINARY_DIR}/quant_models)
+  add_custom_target(gen_quant_models
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${QUANT_MODEL_DIR}
+    COMMAND ${Python3_EXECUTABLE} ${QUANT_DIR}/gen_quant_models.py ${QUANT_MODEL_DIR}
+    WORKING_DIRECTORY ${QUANT_DIR}
+    COMMENT "Generating P11 ONNX QDQ test models")
+
+  add_custom_target(run_quant_qdq
+    COMMAND $<TARGET_FILE:run_quantization>
+            --onnx ${QUANT_MODEL_DIR}/quant_qdq_matmul.onnx
+    DEPENDS run_quantization gen_quant_models
+    COMMENT "Running P11 ONNX QDQ import + qlinear rewrite")
+endif()
 
 add_custom_target(run_quant
   COMMAND $<TARGET_FILE:run_quantization>

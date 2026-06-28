@@ -178,6 +178,125 @@ public:
   }
 };
 
+class SinOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Sin"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto operand = ctx.lookup(node.input(0));
+    if (!operand.valid()) return LogicalResult::failure();
+    ctx.value_map[node.output(0)] = ctx.builder.emit_sine(operand);
+    return LogicalResult::success();
+  }
+};
+
+class CosOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Cos"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto operand = ctx.lookup(node.input(0));
+    if (!operand.valid()) return LogicalResult::failure();
+    ctx.value_map[node.output(0)] = ctx.builder.emit_cosine(operand);
+    return LogicalResult::success();
+  }
+};
+
+class SliceOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Slice"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto operand = ctx.lookup(node.input(0));
+    if (!operand.valid()) return LogicalResult::failure();
+
+    auto *starts_tp = ctx.get_initializer(node.input(1));
+    auto *ends_tp = ctx.get_initializer(node.input(2));
+    if (!starts_tp || !ends_tp) return LogicalResult::failure();
+
+    auto starts = extract_int64s(*starts_tp);
+    auto ends = extract_int64s(*ends_tp);
+    if (starts.size() != ends.size()) return LogicalResult::failure();
+
+    std::vector<int64_t> axes;
+    if (node.input_size() > 3 && !node.input(3).empty()) {
+      if (auto *axes_tp = ctx.get_initializer(node.input(3)))
+        axes = extract_int64s(*axes_tp);
+    }
+    if (axes.empty())
+      for (size_t i = 0; i < starts.size(); ++i) axes.push_back(i);
+
+    std::vector<int64_t> steps(starts.size(), 1);
+    if (node.input_size() > 4 && !node.input(4).empty()) {
+      if (auto *steps_tp = ctx.get_initializer(node.input(4)))
+        steps = extract_int64s(*steps_tp);
+    }
+
+    int64_t rank = operand.type.rank();
+    std::vector<int64_t> start_idx(rank, 0);
+    std::vector<int64_t> limit_idx = operand.type.dims;
+    std::vector<int64_t> stride(rank, 1);
+
+    for (size_t i = 0; i < axes.size(); ++i) {
+      int64_t ax = axes[i];
+      if (ax < 0) ax += rank;
+      if (ax < 0 || ax >= rank) return LogicalResult::failure();
+      start_idx[ax] = starts[i];
+      limit_idx[ax] = ends[i];
+      if (i < steps.size()) stride[ax] = steps[i];
+    }
+
+    shlo::TensorType res = ctx.get_type(node.output(0));
+    if (res.dims.empty()) {
+      res.elem = operand.type.elem;
+      for (int64_t i = 0; i < rank; ++i) {
+        int64_t len = limit_idx[i] - start_idx[i];
+        if (stride[i] != 1 && len > 0)
+          len = (len + stride[i] - 1) / stride[i];
+        res.dims.push_back(std::max<int64_t>(0, len));
+      }
+    }
+
+    ctx.value_map[node.output(0)] = ctx.builder.emit_slice(
+        operand, start_idx, limit_idx, stride, res);
+    return LogicalResult::success();
+  }
+};
+
+class ConcatOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Concat"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    std::vector<shlo::Value> operands;
+    for (int i = 0; i < node.input_size(); ++i) {
+      auto v = ctx.lookup(node.input(i));
+      if (!v.valid()) return LogicalResult::failure();
+      operands.push_back(v);
+    }
+    if (operands.empty()) return LogicalResult::failure();
+
+    int64_t axis = get_int_attr(node, "axis", 0);
+    if (axis < 0) axis += operands[0].type.rank();
+
+    shlo::TensorType res = ctx.get_type(node.output(0));
+    if (res.dims.empty()) {
+      res = operands[0].type;
+      int64_t concat_dim = 0;
+      for (auto &op : operands) concat_dim += op.type.dims[axis];
+      res.dims[axis] = concat_dim;
+    }
+
+    ctx.value_map[node.output(0)] =
+        ctx.builder.emit_concatenate(operands, axis, res);
+    return LogicalResult::success();
+  }
+};
+
 class ReduceMeanOpConversion : public ConversionPattern {
 public:
   std::string target_op_type() const override { return "ReduceMean"; }
@@ -461,6 +580,10 @@ static void populate_onnx_to_stablehlo_patterns(RewritePatternSet &patterns) {
   patterns.add<DivOpConversion>();
   patterns.add<PowOpConversion>();
   patterns.add<SqrtOpConversion>();
+  patterns.add<SinOpConversion>();
+  patterns.add<CosOpConversion>();
+  patterns.add<SliceOpConversion>();
+  patterns.add<ConcatOpConversion>();
   patterns.add<ReduceMeanOpConversion>();
   patterns.add<MatMulOpConversion>();
   patterns.add<ConvOpConversion>();
@@ -481,6 +604,10 @@ static void setup_conversion_target(ConversionTarget &target) {
   target.addIllegalOp("Div");
   target.addIllegalOp("Pow");
   target.addIllegalOp("Sqrt");
+  target.addIllegalOp("Sin");
+  target.addIllegalOp("Cos");
+  target.addIllegalOp("Slice");
+  target.addIllegalOp("Concat");
   target.addIllegalOp("ReduceMean");
   target.addIllegalOp("MatMul");
   target.addIllegalOp("Conv");
@@ -494,72 +621,90 @@ static void setup_conversion_target(ConversionTarget &target) {
 // ====================================================================
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <model.onnx>\n";
+  bool mlirOnly = false;
+  std::string modelPath;
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--mlir-only")
+      mlirOnly = true;
+    else if (modelPath.empty())
+      modelPath = arg;
+  }
+  if (modelPath.empty()) {
+    std::cerr << "Usage: " << argv[0] << " [--mlir-only] <model.onnx>\n";
     return 1;
   }
 
   onnx::ModelProto model;
-  if (!load_model(argv[1], model)) return 1;
+  if (!load_model(modelPath, model)) return 1;
 
-  std::cout
-      << "====================================================\n"
-      << " Level 3: ONNX -> StableHLO (Conversion Framework)\n"
-      << "====================================================\n\n";
-  std::cout << "Model : " << argv[1] << "\n";
-  std::cout << "Graph : " << model.graph().name() << "\n";
-  std::cout << "Nodes : " << model.graph().node_size() << "\n\n";
-
-  // ---- Phase 1: Setup ----
-  std::cout << "--- Phase 1: Setup conversion target & patterns ---\n";
+  if (!mlirOnly) {
+    std::cout
+        << "====================================================\n"
+        << " Level 3: ONNX -> StableHLO (Conversion Framework)\n"
+        << "====================================================\n\n";
+    std::cout << "Model : " << modelPath << "\n";
+    std::cout << "Graph : " << model.graph().name() << "\n";
+    std::cout << "Nodes : " << model.graph().node_size() << "\n\n";
+    std::cout << "--- Phase 1: Setup conversion target & patterns ---\n";
+  }
 
   ConversionTarget target;
   setup_conversion_target(target);
-  std::cout << "  Legal dialect  : stablehlo.*\n";
-  std::cout << "  Illegal ops    : Add, Mul, Sub, Div, Pow, Sqrt, ReduceMean, "
-               "MatMul, Conv, Softmax, Reshape, Transpose\n";
+  if (!mlirOnly) {
+    std::cout << "  Legal dialect  : stablehlo.*\n";
+    std::cout << "  Illegal ops    : Add, Mul, Sub, Div, Pow, Sqrt, Sin, Cos, "
+                 "Slice, Concat, ReduceMean, MatMul, Conv, Softmax, Reshape, "
+                 "Transpose\n";
+  }
 
   RewritePatternSet patterns;
   populate_onnx_to_stablehlo_patterns(patterns);
-  std::cout << "  Registered patterns: " << patterns.patterns().size() << "\n";
+  if (!mlirOnly)
+    std::cout << "  Registered patterns: " << patterns.patterns().size() << "\n";
 
-  // ---- Phase 2: Build context and emit constants ----
-  std::cout << "\n--- Phase 2: Initialize context ---\n";
+  if (!mlirOnly) std::cout << "\n--- Phase 2: Initialize context ---\n";
 
   Context ctx(model.graph());
   ctx.init();
   ctx.create_func_args();
   ctx.emit_initializers();
-  std::cout << "  Function args   : " << ctx.func.args.size() << "\n";
-  std::cout << "  Initializers    : " << ctx.initializer_names.size() << "\n";
-
-  // ---- Phase 3: Apply full conversion ----
-  std::cout << "\n--- Phase 3: Apply full conversion ---\n";
+  if (!mlirOnly) {
+    std::cout << "  Function args   : " << ctx.func.args.size() << "\n";
+    std::cout << "  Initializers    : " << ctx.initializer_names.size() << "\n";
+    std::cout << "\n--- Phase 3: Apply full conversion ---\n";
+  }
 
   ConversionStats stats;
   auto result = applyFullConversion(model.graph(), target, patterns, ctx, stats);
 
-  std::cout << "  Total nodes     : " << stats.total << "\n";
-  std::cout << "  Converted       : " << stats.converted << "\n";
-  std::cout << "  Already legal   : " << stats.already_legal << "\n";
-  std::cout << "  Failed          : " << stats.failed << "\n";
-  if (!stats.failed_ops.empty()) {
-    std::cout << "  Failed ops      :";
-    for (auto &op : stats.failed_ops) std::cout << " " << op;
-    std::cout << "\n";
+  if (!mlirOnly) {
+    std::cout << "  Total nodes     : " << stats.total << "\n";
+    std::cout << "  Converted       : " << stats.converted << "\n";
+    std::cout << "  Already legal   : " << stats.already_legal << "\n";
+    std::cout << "  Failed          : " << stats.failed << "\n";
+    if (!stats.failed_ops.empty()) {
+      std::cout << "  Failed ops      :";
+      for (auto &op : stats.failed_ops) std::cout << " " << op;
+      std::cout << "\n";
+    }
   }
 
   ctx.finalize();
 
-  // ---- Phase 4: Verify legality ----
-  std::cout << "\n--- Phase 4: Verify legality ---\n";
+  if (!mlirOnly) std::cout << "\n--- Phase 4: Verify legality ---\n";
 
   bool legal = verifyLegality(ctx.func, target);
-  std::cout << "  Legality check  : " << (legal ? "PASSED" : "FAILED") << "\n";
+  if (!mlirOnly)
+    std::cout << "  Legality check  : " << (legal ? "PASSED" : "FAILED") << "\n";
 
-  // ---- Phase 5: Output ----
   shlo::ModuleOp module;
   module.funcs.push_back(ctx.func);
+
+  if (mlirOnly) {
+    module.print(std::cout);
+    return (result.succeeded() && legal) ? 0 : 1;
+  }
 
   std::cout << "\n--- Generated StableHLO MLIR ---\n\n";
   module.print(std::cout);

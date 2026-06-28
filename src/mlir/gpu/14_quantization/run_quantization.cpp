@@ -14,6 +14,10 @@
 
 #include "quant_ir.h"
 
+#ifdef QUANT_ONNX_QDQ
+#include "onnx_qdq_import.h"
+#endif
+
 #include <cmath>
 #include <cstdio>
 #include <iomanip>
@@ -22,6 +26,7 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace quant_ir;
@@ -337,6 +342,112 @@ static void stage4_graph_rewrite(Graph &g) {
 }
 
 // =====================================================================
+// P11 Step 0b: ONNX QDQ import
+// =====================================================================
+
+#ifdef QUANT_ONNX_QDQ
+static Graph stage0_load_onnx_qdq(const std::string &path) {
+  sep("Stage 0: ONNX QDQ Import");
+
+  QdqImportStats stats;
+  auto g = load_onnx_qdq(path, stats, std::cout);
+  std::cout << "\n  Imported graph:\n";
+  g.print(std::cout);
+  return g;
+}
+#endif
+
+// =====================================================================
+// P11 Step 4b: Rewrite imported ONNX QDQ → qlinear ops
+// =====================================================================
+
+#ifdef QUANT_ONNX_QDQ
+static void stage4_rewrite_imported_qdq(Graph &g) {
+  sep("Stage 4: ONNX QDQ Graph Rewrite — QLinear MatMul fusion");
+
+  Op *matmul = nullptr;
+  for (auto &op : g.ops)
+    if (op->kind == OpKind::MATMUL) matmul = op.get();
+  if (!matmul || matmul->inputs.size() < 2) {
+    std::cout << "  No MatMul found — keeping imported Q/DQ graph as-is.\n";
+    return;
+  }
+
+  std::unordered_map<std::string, Op *> producers;
+  for (auto &op : g.ops)
+    for (auto &out : op->outputs)
+      producers[out.name] = op.get();
+
+  auto *dq_lhs = producers[matmul->inputs[0].name];
+  auto *dq_rhs = producers[matmul->inputs[1].name];
+  if (!dq_lhs || dq_lhs->kind != OpKind::DEQUANTIZE ||
+      !dq_rhs || dq_rhs->kind != OpKind::DEQUANTIZE) {
+    std::cout << "  MatMul inputs are not DequantizeLinear — skip fusion.\n";
+    return;
+  }
+
+  TensorType in_q = dq_lhs->inputs[0];
+  TensorType w_q = dq_rhs->inputs[0];
+  TensorType model_in = producers.count(in_q.name)
+                            ? producers[in_q.name]->inputs[0]
+                            : dq_lhs->inputs[0];
+  if (auto *q_in_prod = producers[in_q.name])
+    model_in = q_in_prod->inputs[0];
+
+  Op *out_dq = nullptr;
+  for (auto it = g.ops.rbegin(); it != g.ops.rend(); ++it)
+    if ((*it)->kind == OpKind::DEQUANTIZE) {
+      out_dq = it->get();
+      break;
+    }
+
+  Graph rewritten;
+  rewritten.name = g.name + "_qlinear";
+
+  auto *q_boundary = rewritten.add_op(OpKind::QUANTIZE, "onnx_quantize_input");
+  q_boundary->inputs.push_back(model_in);
+  q_boundary->outputs.push_back(in_q);
+  q_boundary->output_qparam = in_q.qparam;
+  q_boundary->is_quantized = true;
+
+  auto *qmm = rewritten.add_op(OpKind::QLINEAR_MATMUL, "onnx_qlinear_matmul");
+  qmm->inputs = {in_q, w_q};
+  TensorType mm_q = matmul->outputs[0];
+  mm_q.name = "mm_out_q";
+  mm_q.dtype = DType::INT8;
+  for (auto &op : g.ops)
+    if (op->kind == OpKind::QUANTIZE && op.get() != matmul)
+      mm_q.qparam = op->output_qparam;
+  qmm->outputs.push_back(mm_q);
+  qmm->output_qparam = mm_q.qparam;
+  qmm->is_quantized = true;
+
+  TensorType out_fp32 = out_dq ? out_dq->outputs[0] : matmul->outputs[0];
+  out_fp32.dtype = DType::FP32;
+  auto *dq_out = rewritten.add_op(OpKind::DEQUANTIZE, "onnx_dequantize_output");
+  dq_out->inputs.push_back(mm_q);
+  dq_out->outputs.push_back(out_fp32);
+
+  int q_ops = 0, dq_ops = 0, qlinear_ops = 0;
+  for (auto &op : rewritten.ops) {
+    if (op->kind == OpKind::QUANTIZE) ++q_ops;
+    if (op->kind == OpKind::DEQUANTIZE) ++dq_ops;
+    if (op->kind == OpKind::QLINEAR_MATMUL) ++qlinear_ops;
+  }
+
+  std::cout << "  Fused DQ → MatMul → DQ into qlinear_matmul.\n\n";
+  std::cout << "  Rewritten graph:\n";
+  rewritten.print(std::cout);
+  std::cout << "\n  ONNX QDQ rewrite summary:\n";
+  std::cout << "    quantize ops:      " << q_ops << "\n";
+  std::cout << "    dequantize ops:    " << dq_ops << "\n";
+  std::cout << "    qlinear_matmul:    " << qlinear_ops << "\n";
+
+  g = std::move(rewritten);
+}
+#endif
+
+// =====================================================================
 // P11 Step 5: Mixed Precision — sensitivity analysis
 // =====================================================================
 
@@ -470,10 +581,21 @@ static void stage6_summary(const Graph &g) {
 // main
 // =====================================================================
 
-int main() {
+int main(int argc, char **argv) {
   std::cout << "========================================================\n";
   std::cout << " Stage 14: Quantization & Mixed-Precision Pipeline\n";
   std::cout << "========================================================\n";
+
+#ifdef QUANT_ONNX_QDQ
+  if (argc >= 3 && std::string(argv[1]) == "--onnx") {
+    auto g = stage0_load_onnx_qdq(argv[2]);
+    stage4_rewrite_imported_qdq(g);
+    std::cout << "\n========================================================\n";
+    std::cout << " ONNX QDQ Import + Rewrite Complete!\n";
+    std::cout << "========================================================\n";
+    return 0;
+  }
+#endif
 
   auto g = stage0_setup();
   stage1_calibration(g);
