@@ -10,6 +10,11 @@ Models:
     lowering_broadcast.onnx         — Add/Mul with numpy-style broadcast
     lowering_conv_full.onnx         — Conv with bias, strides, pads
     lowering_dynamic.onnx           — Dynamic batch dimension
+
+  P4 tier 3 (framework):
+    lowering_softmax.onnx           — Softmax(axis=-1) decomposition
+    lowering_attention.onnx         — Scaled dot-product attention subgraph
+    lowering_rmsnorm.onnx           — RMSNorm decomposition
 """
 
 from pathlib import Path
@@ -133,6 +138,74 @@ def make_lowering_dynamic(out_dir):
     _save(m, "lowering_dynamic.onnx", out_dir)
 
 
+def make_lowering_softmax(out_dir):
+    """X(2,4) → Softmax(axis=-1) → Y(2,4)
+    Tests tier-3 decomposition into reduce/sub/exp/reduce/divide."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+
+    softmax = helper.make_node("Softmax", ["X"], ["Y"],
+                               name="softmax_0", axis=-1)
+    graph = helper.make_graph([softmax], "softmax", [X], [Y])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_softmax.onnx", out_dir)
+
+
+def make_lowering_attention(out_dir):
+    """Q,K,V(1,2,4) → MatMul(Q,K^T) → scale → Softmax → MatMul(V) → Y.
+    Tests a small scaled dot-product attention lowering path."""
+    Q = helper.make_tensor_value_info("Q", TensorProto.FLOAT, [1, 2, 4])
+    Kt = helper.make_tensor_value_info("Kt", TensorProto.FLOAT, [1, 4, 2])
+    V = helper.make_tensor_value_info("V", TensorProto.FLOAT, [1, 2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 2, 4])
+    scale = numpy_helper.from_array(
+        np.array(0.5, dtype=np.float32), "scale")
+
+    qk = helper.make_node("MatMul", ["Q", "Kt"], ["scores"],
+                          name="attention_qk")
+    scale_n = helper.make_node("Mul", ["scores", "scale"],
+                               ["scaled_scores"], name="attention_scale")
+    softmax = helper.make_node("Softmax", ["scaled_scores"], ["probs"],
+                               name="attention_softmax", axis=-1)
+    out = helper.make_node("MatMul", ["probs", "V"], ["Y"],
+                           name="attention_pv")
+
+    graph = helper.make_graph([qk, scale_n, softmax, out], "attention",
+                              [Q, Kt, V], [Y], initializer=[scale])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_attention.onnx", out_dir)
+
+
+def make_lowering_rmsnorm(out_dir):
+    """X(2,4), weight(4) → RMSNorm(eps=1e-5) → Y(2,4).
+    Builds RMSNorm from ONNX primitive ops so tier-3 legalization must support
+    reduction, sqrt/divide and broadcasting."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    weight = numpy_helper.from_array(np.ones(4, dtype=np.float32), "weight")
+    two = numpy_helper.from_array(np.array(2.0, dtype=np.float32), "two")
+    eps = numpy_helper.from_array(np.array(1.0e-5, dtype=np.float32), "eps")
+
+    square = helper.make_node("Pow", ["X", "two"], ["x2"], name="rms_square")
+    mean = helper.make_node("ReduceMean", ["x2"], ["mean"],
+                            name="rms_mean", axes=[-1], keepdims=1)
+    add_eps = helper.make_node("Add", ["mean", "eps"], ["var_eps"],
+                               name="rms_add_eps")
+    sqrt = helper.make_node("Sqrt", ["var_eps"], ["denom"], name="rms_sqrt")
+    norm = helper.make_node("Div", ["X", "denom"], ["norm"], name="rms_div")
+    mul = helper.make_node("Mul", ["norm", "weight"], ["Y"],
+                           name="rms_weight")
+
+    graph = helper.make_graph([square, mean, add_eps, sqrt, norm, mul],
+                              "rmsnorm", [X], [Y],
+                              initializer=[weight, two, eps])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_rmsnorm.onnx", out_dir)
+
+
 def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -143,6 +216,9 @@ def main():
     make_lowering_broadcast(out_dir)
     make_lowering_conv_full(out_dir)
     make_lowering_dynamic(out_dir)
+    make_lowering_softmax(out_dir)
+    make_lowering_attention(out_dir)
+    make_lowering_rmsnorm(out_dir)
     print("Done.")
 
 

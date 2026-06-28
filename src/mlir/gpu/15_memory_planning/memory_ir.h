@@ -35,6 +35,11 @@ struct BufferReq {
   bool is_input = false;
   bool is_output = false;
   bool is_weight = false;
+  bool is_kv_cache = false;
+  int layer_id = -1;
+  int first_token = -1;
+  int last_token = -1;
+  std::string cache_role;
 
   int64_t aligned_size() const {
     return (size_bytes + alignment - 1) / alignment * alignment;

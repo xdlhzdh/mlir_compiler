@@ -66,8 +66,8 @@ cmake --build . -j$(nproc)
 │  ONNX 解析 → 自定义 mini IR Lowering → 图级优化 (Conv+BN Fusion, 常量折叠)      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  辅助P5(`4_`) / P4 / P5: L2 StableHLO 高级张量算子                             │
-│  PyTorch→StableHLO (Python) → ONNX→StableHLO (tier 1/2/3) → MLIR Pass 插件 │
-│  → StableHLO 6-Step 优化                                                     │
+│  PyTorch→StableHLO (Python) → ONNX→StableHLO (tier 1/2/3, 含 Softmax/Attention/RMSNorm) │
+│  → MLIR Pass 插件 → StableHLO 6-Step 优化                                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  P6–P7: L3 Linalg 结构化算子与内存                                             │
 │  Linalg Tiling & Fusion → One-Shot Bufferization                            │
@@ -76,7 +76,7 @@ cmake --build . -j$(nproc)
 │  SCF/Affine 循环优化 → Vector 向量化 → LLVM Backend (ISel/RegAlloc/Sched)     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  P10–P12: L4 GPU 映射 & 部署优化 (纯 C++)                                      │
-│  GPU Codegen (NVVM/PTX) → 量化 & 混合精度 → 内存规划 & Buffer 复用             │
+│  GPU Codegen (NVVM/PTX) → Q/DQ 量化图改写 & 混合精度 → KVCache-aware 内存规划  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -98,8 +98,8 @@ cmake --build . -j$(nproc)
 | `11_vector/` | **P8** | Vector Dialect 6-Step：前置检查→Core(transfer_read/write/fma)→Register Blocking→LLVM | **无** | `run_vec` |
 | `12_llvm_lowering/` | **P9** | LLVM Backend 7-Step：Vector Lowering→LLVM IR→ISel→RegAlloc→Scheduling→Machine Code | **无** | `run_llvm_lower` |
 | `13_gpu_codegen/` | **P10** | GPU Codegen 7-Step：并行检测→Thread Mapping→GPU Dialect→Shared Mem→NVVM→PTX→Occupancy | **无** | `run_gpu` |
-| `14_quantization/` | **P11** | 量化 7-Step：校准统计→Scale 计算→量化融合→QLinear 重写→混合精度分析→Speedup 估算 | **无** | `run_quant` |
-| `15_memory_planning/` | **P12** | 内存规划 7-Step：Liveness→干涉图→Offset 分配→Buffer 复用→In-place 优化→峰值分析 | **无** | `run_memplan` |
+| `14_quantization/` | **P11** | 量化 7-Step：校准统计→Scale 计算→量化融合→**真实 Q/DQ 图改写**→混合精度分析→Speedup 估算 | **无** | `run_quant` |
+| `15_memory_planning/` | **P12** | 内存规划 8-Step：Liveness→干涉图→Offset 分配→Buffer 复用→In-place 优化→峰值分析→**KVCache decode 场景** | **无** | `run_memplan` |
 
 > `conv_bn_optimized` 跨两个目录：`4_` 的 Python 脚本生成 MLIR，`6_` 的 C++ Pass 插件做 Conv+BN Fusion。
 
@@ -135,8 +135,8 @@ make run_llvm_lower         # P9: Vector → LLVM Backend (ISel/RegAlloc/Sched/E
 
 # ── L4 GPU 映射 & 部署优化（纯 C++）──
 make run_gpu                # P10: GPU Code Generation (→ NVVM → PTX → Occupancy)
-make run_quant              # P11: Quantization & 混合精度 pipeline
-make run_memplan            # P12: Memory Planning & Buffer 复用 pipeline
+make run_quant              # P11: Quantization & 混合精度 pipeline（含真实 Q/DQ 图改写）
+make run_memplan            # P12: Memory Planning & Buffer 复用 pipeline（含 KVCache decode 场景）
 ```
 
 #### 通过 DOMAIN/PASS 参数运行
@@ -168,7 +168,7 @@ make run DOMAIN=mlir PASS=memplan         # P12
 | make target | 等价 DOMAIN/PASS | Px | 说明 |
 |-------------|-----------------|-----|------|
 | `make run_graph` | `DOMAIN=mlir PASS=graph` | P1–P3 | 生成 ONNX 测试模型 → 解析 → IR Lowering → 图优化（需 Protobuf + numpy + onnx） |
-| `make run_lowering` | `DOMAIN=mlir PASS=lowering` | P4 | ONNX→StableHLO tier 1(基础) + tier 2(broadcast/dynamic) + tier 3(framework)，产物属 L2 StableHLO |
+| `make run_lowering` | `DOMAIN=mlir PASS=lowering` | P4 | ONNX→StableHLO tier 1(基础) + tier 2(broadcast/dynamic) + tier 3(framework + Softmax/Attention/RMSNorm fixture) |
 | `make conv_bn_optimized` | `DOMAIN=mlir PASS=conv_bn_fusion` | P5 | `4_` Python 导出 MLIR + `6_` mlir-opt Conv+BN Fusion（需 torch + torch-mlir） |
 | `make run_shlo_opt` | `DOMAIN=mlir PASS=shlo_opt` | P5 | StableHLO 图: 24 ops → Canon/Shape/CSE/DCE/Fusion/Layout/Legal → 7 ops |
 | `make run_linalg` | `DOMAIN=mlir PASS=linalg` | P6 | GEMM+Bias+ReLU: 11 ops → 依赖分析/代价模型/Tile-and-Fuse → 5 ops |
@@ -177,8 +177,8 @@ make run DOMAIN=mlir PASS=memplan         # P12
 | `make run_vec` | `DOMAIN=mlir PASS=vector` | P8 | 标量循环→vector.transfer_read/write/fma, 4-row register blocking, tail masking |
 | `make run_llvm_lower` | `DOMAIN=mlir PASS=llvm_lower` | P9 | Vector→LLVM IR→ISel(vfmadd231ps)→RegAlloc(12/16 YMM, 0 spill)→Sched→MachineCode |
 | `make run_gpu` | `DOMAIN=mlir PASS=gpu_codegen` | P10 | GEMM: 并行检测→GPU grid/block 映射→Shared mem tiling→NVVM→PTX→Occupancy 分析 |
-| `make run_quant` | `DOMAIN=mlir PASS=quantization` | P11 | ResNet block: 校准→Scale→Conv+BN+ReLU→QLinearConv→INT8/FP16 混合精度 |
-| `make run_memplan` | `DOMAIN=mlir PASS=memplan` | P12 | ResNet block: Liveness→干涉图→Offset 分配→Buffer 复用→In-place→峰值分析 |
+| `make run_quant` | `DOMAIN=mlir PASS=quantization` | P11 | ResNet block: 校准→Scale→Fusion→**真实 Q/DQ 图改写**（`quantize`/`dequantize`/`qlinear_*`）→INT8/FP16 混合精度 |
+| `make run_memplan` | `DOMAIN=mlir PASS=memplan` | P12 | ResNet block + KVCache decode: Liveness→干涉图→Offset 分配→Buffer 复用→In-place→峰值分析 |
 | `make run_mlir` | `DOMAIN=mlir` | P1–P12 | 依次运行所有 MLIR target；缺少可选依赖的 target 自动跳过 |
 
 #### 从项目根目录运行
@@ -216,7 +216,9 @@ Pipeline: `gen_test_models.py → run_onnx_parse → run_onnx_to_ir → run_grap
 |------|-----------|---------|
 | **tier 1** | `run_lowering_l1` | Add/MatMul/Conv/Reshape/Transpose → stablehlo 对应 op |
 | **tier 2** | `run_lowering_l2` | broadcast → `broadcast_in_dim`；dynamic shape；完整 Conv 属性映射；错误处理 |
-| **tier 3** | `run_lowering_l3` | `ConversionPattern` + `matchAndRewrite`；`ConversionTarget`；`applyFullConversion` |
+| **tier 3** | `run_lowering_l3` | `ConversionPattern` + `matchAndRewrite`；`ConversionTarget`；`applyFullConversion`；覆盖 Softmax、Scaled Dot-Product Attention、RMSNorm 等 Transformer 子图 |
+
+`gen_lowering_models.py` 生成的 tier 3 fixture 包括：`lowering_softmax.onnx`、`lowering_attention.onnx`（MatMul→scale→Softmax→MatMul）、`lowering_rmsnorm.onnx`（Pow/ReduceMean/Sqrt/Div/Mul 分解）。`run_lowering` 会对上述模型逐一回归。
 
 ### P5（`6_stablehlo_passes/`）: StableHLO MLIR Pass 插件
 
@@ -354,9 +356,11 @@ mlir-opt --load-pass-plugin=./DialectPass.so \
 | 1 | Calibration | 收集 min/max/histogram（MinMax/Percentile/Entropy/MSE 对比） |
 | 2 | Scale Computation | symmetric/affine, per-tensor/per-channel scale+zp |
 | 3 | Fusion | Conv+BN+ReLU → QLinearConv（BN folding + ReLU clip uint8） |
-| 4 | Graph Rewrite | 插入 Q/DQ 或 QLinear 算子，INT8 GEMM 累加流程 |
+| 4 | Graph Rewrite | **真实图改写**：插入 `quantize`/`dequantize` 边界，将 Conv/MatMul 转为 `qlinear_conv`/`qlinear_matmul`，输出量化节点统计 |
 | 5 | Mixed Precision | 逐层敏感度分析: drop<0.5%→INT8, drop<0.1%→FP16, else→FP32 |
 | 6 | Summary | 模型大小压缩比, 吞吐提升估算 |
+
+Stage 4 会构造 `resnet_block_qdq_rewritten` 图，典型节点包括 `quantize_input`、`qlinear_conv1_bn_relu`、`dequantize_conv1_boundary`、`quantize_fc_input`、`qlinear_fc`、`dequantize_output`。
 
 ### P12: Memory Planning (`15_memory_planning/`)
 
@@ -371,6 +375,9 @@ mlir-opt --load-pass-plugin=./DialectPass.so \
 | 4 | Buffer Reuse | 枚举可复用的 buffer 对, 潜在节省量 |
 | 5 | In-place Optimization | elementwise op 的输出 alias 输入（WAR 安全性检查） |
 | 6 | Summary | 峰值内存, 压缩比, 碎片率, 高级技术参考 |
+| 7 | KVCache Decode Planning | 模拟多层 Transformer decode：K/V cache live interval、paged slot 分配、naive vs peak KV bytes、slot 复用收益 |
+
+Stage 7 为教学级 KVCache 内存规划模拟（非真实推理 runtime cache manager），输出 `KVCache`、`decode step`、`peak KV bytes`、`slot reuse saving` 等信息。
 
 ---
 

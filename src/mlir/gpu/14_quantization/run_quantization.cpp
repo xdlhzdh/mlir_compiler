@@ -241,38 +241,99 @@ static void stage3_fusion(Graph &g) {
 static void stage4_graph_rewrite(Graph &g) {
   sep("Stage 4: Graph Rewrite — Insert Quantize/Dequantize");
 
-  std::cout << "  Two quantization styles:\n\n";
+  std::cout << "  Rewriting the graph into explicit Q/DQ boundaries plus native INT8 ops.\n";
+  std::cout << "  Backend passes can either fuse Q/DQ into kernels or keep qlinear_* ops.\n\n";
 
-  std::cout << "  Style A: Q/DQ (Quantize-Dequantize) insertion — ONNX/TensorRT style\n";
-  std::cout << "    fp32_input → [Quantize] → int8 → [DQ] → fp32 → [Conv] → fp32 → [Q] → int8\n";
-  std::cout << "    Advantage: graph stays in FP32 semantics; backends fuse Q/DQ into operators\n\n";
+  Graph rewritten;
+  rewritten.name = g.name + "_qdq_rewritten";
 
-  std::cout << "  Style B: Native INT8 graph — compiler-level lowering\n";
-  std::cout << "    int8_input → [QLinearConv] → int8 → [QLinearMatMul] → int8\n";
-  std::cout << "    Advantage: explicit int8 compute; no ambiguity\n\n";
+  auto input_f32 = g.ops[0]->inputs[0];
+  TensorType input_q = input_f32;
+  input_q.name = "input_q";
+  input_q.dtype = DType::UINT8;
+  input_q.qparam = g.ops[0]->output_qparam;
 
-  std::cout << "  We use Style B (QLinear operators with explicit scale/zp):\n\n";
+  auto *q_input = rewritten.add_op(OpKind::QUANTIZE, "quantize_input");
+  q_input->inputs.push_back(input_f32);
+  q_input->outputs.push_back(input_q);
+  q_input->output_qparam = input_q.qparam;
+  q_input->is_quantized = true;
 
-  std::cout << "  Rewritten IR:\n";
-  std::cout << "    // Input quantization\n";
-  std::cout << "    %input_q = quantize(%input_f32, scale=0.0196, zp=0) : tensor<1x3x224x224xui8>\n\n";
+  TensorType w1_q = g.ops[0]->inputs[1];
+  w1_q.name = "conv1.weight_q";
+  w1_q.dtype = DType::INT8;
+  w1_q.qparam = g.ops[0]->output_qparam;
 
-  std::cout << "    // QLinearConv: int8 × int8 → int32 → rescale → uint8\n";
-  std::cout << "    %conv1_out = qlinear_conv(\n";
-  std::cout << "        %input_q,        x_scale=0.0196, x_zp=0,\n";
-  std::cout << "        %weight_q,       w_scale=[per_channel], w_zp=0,\n";
-  std::cout << "                         y_scale=0.0118, y_zp=0\n";
-  std::cout << "    ) {fused_relu=true} : tensor<1x64x112x112xui8>\n\n";
+  TensorType qconv_out = g.ops[0]->outputs[0];
+  qconv_out.name = "qconv1_bn_relu_out";
+  qconv_out.dtype = DType::UINT8;
+  qconv_out.qparam = g.ops[0]->output_qparam;
 
-  std::cout << "    // QLinearMatMul: int8 × int8 → int32 → rescale → int8\n";
-  std::cout << "    %fc_out = qlinear_matmul(\n";
-  std::cout << "        %fc_in_q,        a_scale=0.0098, a_zp=0,\n";
-  std::cout << "        %weight_q,       b_scale=0.0392, b_zp=0,\n";
-  std::cout << "                         y_scale=0.0196, y_zp=0\n";
-  std::cout << "    ) : tensor<1x1000xi8>\n\n";
+  auto *qconv = rewritten.add_op(OpKind::QLINEAR_CONV, "qlinear_conv1_bn_relu");
+  qconv->inputs = {input_q, w1_q, g.ops[0]->inputs[2]};
+  qconv->outputs.push_back(qconv_out);
+  qconv->output_qparam = qconv_out.qparam;
+  qconv->is_quantized = true;
 
-  std::cout << "    // Output dequantization\n";
-  std::cout << "    %output = dequantize(%fc_out, scale=0.0196, zp=0) : tensor<1x1000xf32>\n";
+  TensorType conv_dq = qconv_out;
+  conv_dq.name = "qconv1_bn_relu_out_dq";
+  conv_dq.dtype = DType::FP32;
+  auto *dq_conv = rewritten.add_op(OpKind::DEQUANTIZE, "dequantize_conv1_boundary");
+  dq_conv->inputs.push_back(qconv_out);
+  dq_conv->outputs.push_back(conv_dq);
+
+  TensorType fc_in = g.ops[4]->inputs[0];
+  TensorType fc_in_q = fc_in;
+  fc_in_q.name = "fc_in_q";
+  fc_in_q.dtype = DType::INT8;
+  fc_in_q.qparam = g.ops[4]->output_qparam;
+
+  auto *q_fc_in = rewritten.add_op(OpKind::QUANTIZE, "quantize_fc_input");
+  q_fc_in->inputs.push_back(fc_in);
+  q_fc_in->outputs.push_back(fc_in_q);
+  q_fc_in->output_qparam = fc_in_q.qparam;
+  q_fc_in->is_quantized = true;
+
+  TensorType fc_w_q = g.ops[4]->inputs[1];
+  fc_w_q.name = "fc.weight_q";
+  fc_w_q.dtype = DType::INT8;
+
+  TensorType fc_out_q = g.ops[4]->outputs[0];
+  fc_out_q.name = "fc_out_q";
+  fc_out_q.dtype = DType::INT8;
+  fc_out_q.qparam = g.ops[4]->output_qparam;
+
+  auto *qmm = rewritten.add_op(OpKind::QLINEAR_MATMUL, "qlinear_fc");
+  qmm->inputs = {fc_in_q, fc_w_q};
+  qmm->outputs.push_back(fc_out_q);
+  qmm->output_qparam = fc_out_q.qparam;
+  qmm->is_quantized = true;
+
+  TensorType output = fc_out_q;
+  output.name = "fc_out";
+  output.dtype = DType::FP32;
+  auto *dq_out = rewritten.add_op(OpKind::DEQUANTIZE, "dequantize_output");
+  dq_out->inputs.push_back(fc_out_q);
+  dq_out->outputs.push_back(output);
+
+  int q_ops = 0, dq_ops = 0, native_int8_ops = 0;
+  for (auto &op : rewritten.ops) {
+    if (op->kind == OpKind::QUANTIZE) ++q_ops;
+    if (op->kind == OpKind::DEQUANTIZE) ++dq_ops;
+    if (op->kind == OpKind::QLINEAR_CONV || op->kind == OpKind::QLINEAR_MATMUL)
+      ++native_int8_ops;
+  }
+
+  std::cout << "  Rewritten quantized graph:\n";
+  rewritten.print(std::cout);
+  std::cout << "\n  Quantization rewrite summary:\n";
+  std::cout << "    quantize ops:      " << q_ops << "\n";
+  std::cout << "    dequantize ops:    " << dq_ops << "\n";
+  std::cout << "    native INT8 ops:   " << native_int8_ops << "\n";
+  std::cout << "    boundary policy:   keep FP32 graph edges at model inputs/outputs, "
+               "use qlinear kernels internally\n";
+
+  g = std::move(rewritten);
 }
 
 // =====================================================================

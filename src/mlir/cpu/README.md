@@ -134,7 +134,7 @@ export LLVM_INSTALL_PREFIX="${LLVM_INSTALL_PREFIX:-/usr/local}"
 cmake -G Ninja ../llvm \
   -DCMAKE_C_COMPILER="$CC" \
   -DCMAKE_CXX_COMPILER="$CXX" \
-  -DLLVM_ENABLE_PROJECTS="mlir;clang" \
+  -DLLVM_ENABLE_PROJECTS="mlir;clang;clang-tools-extra" \
   -DLLVM_TARGETS_TO_BUILD="RISCV;X86" \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_ENABLE_ASSERTIONS=ON \
@@ -143,7 +143,7 @@ cmake -G Ninja ../llvm \
 
 ninja
 ninja mlir-tblgen mlir-python-sources (可选)
-ninja install (安装 clang | llvm-config | opt 到 PATH 以及 LLVMConfig.cmake | MLIRConfig.cmake 到 CMAKE_INSTALL_PREFIX)
+ninja install (安装 `clang | llvm-config | opt` 到 PATH 以及 `LLVMConfig.cmake | MLIRConfig.cmake` 到 CMAKE_INSTALL_PREFIX; clang-tools-extra 是为了安装 `clangd`)
 ```
 
 安装后把工具链放进 `PATH`：

@@ -489,8 +489,9 @@ static void stage6_summary(const ExecGraph &g, const MemPool &pool) {
   int64_t actual_used = 0;
   for (auto &a : pool.allocs)
     actual_used += a.size;
-  float frag = 1.0f - static_cast<float>(actual_used) / used_in_pool;
-  if (used_in_pool == 0) frag = 0;
+  float frag = 0.0f;
+  if (used_in_pool > 0 && actual_used < used_in_pool)
+    frag = 1.0f - static_cast<float>(actual_used) / used_in_pool;
   std::cout << "    Internal fragmentation: " << static_cast<int>(frag * 100) << "%\n\n";
 
   std::cout << "  Advanced techniques (not implemented, for reference):\n";
@@ -499,6 +500,87 @@ static void stage6_summary(const ExecGraph &g, const MemPool &pool) {
   std::cout << "    • Defragmentation: compact memory pool periodically\n";
   std::cout << "    • Unified memory pool: share between CPU/GPU with async prefetch\n";
   std::cout << "    • Tensor swapping: offload to CPU memory when GPU is full\n";
+}
+
+// =====================================================================
+// P12 Step 7: KVCache-aware Decode Memory Planning
+// =====================================================================
+
+static void stage7_kvcache_decode_planning() {
+  sep("Stage 7: KVCache-aware Decode Memory Planning");
+
+  constexpr int layers = 4;
+  constexpr int heads = 8;
+  constexpr int head_dim = 64;
+  constexpr int max_seq_len = 128;
+  constexpr int active_window = 64;
+  constexpr int page_tokens = 16;
+  constexpr int bytes_per_elem = 2; // fp16 cache
+
+  const int64_t one_token_kv_bytes =
+      static_cast<int64_t>(heads) * head_dim * bytes_per_elem;
+  const int64_t page_bytes = one_token_kv_bytes * page_tokens;
+  const int pages_per_layer_naive =
+      (max_seq_len + page_tokens - 1) / page_tokens;
+  const int pages_per_layer_window =
+      (active_window + page_tokens - 1) / page_tokens;
+
+  ExecGraph kv_graph;
+  std::cout << "  KVCache decode setup:\n";
+  std::cout << "    layers:          " << layers << "\n";
+  std::cout << "    heads/head_dim:  " << heads << " x " << head_dim << "\n";
+  std::cout << "    max seq len:     " << max_seq_len << " tokens\n";
+  std::cout << "    active window:   " << active_window << " tokens\n";
+  std::cout << "    page size:       " << page_tokens << " tokens\n\n";
+
+  for (int layer = 0; layer < layers; ++layer) {
+    for (const char *role : {"K", "V"}) {
+      int id = kv_graph.add_buffer(
+          "layer" + std::to_string(layer) + "." + role + "_cache",
+          page_bytes * pages_per_layer_window);
+      auto &buf = kv_graph.buffers[id];
+      buf.is_kv_cache = true;
+      buf.layer_id = layer;
+      buf.first_token = 0;
+      buf.last_token = max_seq_len - 1;
+      buf.cache_role = role;
+    }
+  }
+
+  std::cout << "  KVCache live intervals by layer:\n";
+  for (auto &buf : kv_graph.buffers) {
+    std::cout << "    " << std::left << std::setw(18) << buf.name
+              << " role=" << std::setw(2) << buf.cache_role
+              << " layer=" << buf.layer_id
+              << " tokens=[" << buf.first_token << ", " << buf.last_token
+              << "] slot_bytes=" << buf.size_bytes << "\n";
+  }
+
+  std::cout << "\n  Decode step slot assignment (first 6 steps):\n";
+  for (int step = 0; step < 6; ++step) {
+    int page = (step / page_tokens) % pages_per_layer_window;
+    int offset = (step % page_tokens) * one_token_kv_bytes;
+    std::cout << "    decode step " << std::setw(2) << step
+              << " -> page slot " << page
+              << ", intra-page offset " << offset << " bytes\n";
+  }
+
+  int64_t naive_kv_bytes =
+      static_cast<int64_t>(layers) * 2 * pages_per_layer_naive * page_bytes;
+  int64_t slotted_peak_kv_bytes =
+      static_cast<int64_t>(layers) * 2 * pages_per_layer_window * page_bytes;
+  float reuse_ratio =
+      1.0f - static_cast<float>(slotted_peak_kv_bytes) / naive_kv_bytes;
+
+  std::cout << "\n  KVCache memory planning summary:\n";
+  std::cout << "    naive KV bytes:       " << naive_kv_bytes
+            << " (" << naive_kv_bytes / 1024 << " KB)\n";
+  std::cout << "    peak KV bytes:        " << slotted_peak_kv_bytes
+            << " (" << slotted_peak_kv_bytes / 1024 << " KB)\n";
+  std::cout << "    slot reuse saving:    "
+            << static_cast<int>(reuse_ratio * 100) << "%\n";
+  std::cout << "    policy:               sliding-window paged KV slots; "
+               "oldest pages are reusable after the active window\n";
 }
 
 // =====================================================================
@@ -517,6 +599,7 @@ int main() {
   stage4_buffer_reuse(g, intervals, conflict);
   stage5_inplace(g, intervals);
   stage6_summary(g, pool);
+  stage7_kvcache_decode_planning();
 
   std::cout << "\n========================================================\n";
   std::cout << " Memory Planning Pipeline Complete!\n";

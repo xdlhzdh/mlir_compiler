@@ -5,7 +5,6 @@
 // that produces StableHLO-compatible MLIR text output. Designed for learning
 // the semantic mapping from ONNX to StableHLO/XLA.
 
-#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <iostream>
@@ -197,6 +196,56 @@ public:
   }
   Value emit_subtract(const Value &lhs, const Value &rhs) {
     return emit_binary("stablehlo.subtract", lhs, rhs, lhs.type);
+  }
+  Value emit_subtract(const Value &lhs, const Value &rhs,
+                      const TensorType &rt) {
+    return emit_binary("stablehlo.subtract", lhs, rhs, rt);
+  }
+  Value emit_divide(const Value &lhs, const Value &rhs) {
+    return emit_binary("stablehlo.divide", lhs, rhs, lhs.type);
+  }
+  Value emit_divide(const Value &lhs, const Value &rhs,
+                    const TensorType &rt) {
+    return emit_binary("stablehlo.divide", lhs, rhs, rt);
+  }
+
+  // ---- stablehlo.exponential ----
+
+  Value emit_exponential(const Value &operand) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.exponential " << operand.name << " : "
+      << operand.type.str();
+    append({"stablehlo.exponential", name, operand.type, a.str()});
+    return {name, operand.type};
+  }
+
+  Value emit_sqrt(const Value &operand) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.sqrt " << operand.name << " : " << operand.type.str();
+    append({"stablehlo.sqrt", name, operand.type, a.str()});
+    return {name, operand.type};
+  }
+
+  // ---- stablehlo.reduce ----
+
+  Value emit_reduce(const Value &operand, const Value &init,
+                    const char *reducer_mnemonic,
+                    const std::vector<int64_t> &dimensions,
+                    const TensorType &result_type) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.reduce(" << operand.name << " init: " << init.name
+      << ") applies " << reducer_mnemonic << " across dimensions = [";
+    for (size_t i = 0; i < dimensions.size(); ++i) {
+      if (i) a << ", ";
+      a << dimensions[i];
+    }
+    a << "] : (" << operand.type.str() << ", " << init.type.str()
+      << ") -> " << result_type.str();
+    append({"stablehlo.reduce", name, result_type, a.str()});
+    return {name, result_type};
   }
 
   // ---- stablehlo.dot_general ----

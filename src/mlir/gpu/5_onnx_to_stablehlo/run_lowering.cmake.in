@@ -45,5 +45,14 @@ run_exe(${RUN_L3} "${MODEL_DIR}/lowering_broadcast.onnx")
 banner("P4 tier 3: Framework — lowering_conv_full.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_conv_full.onnx")
 
+banner("P4 tier 3: Framework — lowering_softmax.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_softmax.onnx")
+
+banner("P4 tier 3: Framework — lowering_attention.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_attention.onnx")
+
+banner("P4 tier 3: Framework — lowering_rmsnorm.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_rmsnorm.onnx")
+
 message(STATUS "")
 message(STATUS "All P4 lowering tiers (1–3) completed successfully.")

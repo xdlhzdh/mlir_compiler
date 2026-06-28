@@ -12,6 +12,7 @@
 // 运行: ./run_lowering_l3 <model.onnx>
 
 #include "conversion_framework.h"
+#include <algorithm>
 #include <cassert>
 
 using namespace onnx2shlo;
@@ -96,6 +97,136 @@ public:
     auto bl = maybe_broadcast(lhs, rt, ctx);
     auto br = maybe_broadcast(rhs, rt, ctx);
     ctx.value_map[node.output(0)] = ctx.builder.emit_multiply(bl, br, rt);
+    return LogicalResult::success();
+  }
+};
+
+class SubOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Sub"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto lhs = ctx.lookup(node.input(0));
+    auto rhs = ctx.lookup(node.input(1));
+    if (!lhs.valid() || !rhs.valid()) return LogicalResult::failure();
+
+    auto rt = broadcast_result_type(lhs.type, rhs.type);
+    if (rt.dims.empty()) return LogicalResult::failure();
+
+    auto bl = maybe_broadcast(lhs, rt, ctx);
+    auto br = maybe_broadcast(rhs, rt, ctx);
+    ctx.value_map[node.output(0)] = ctx.builder.emit_subtract(bl, br, rt);
+    return LogicalResult::success();
+  }
+};
+
+class DivOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Div"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto lhs = ctx.lookup(node.input(0));
+    auto rhs = ctx.lookup(node.input(1));
+    if (!lhs.valid() || !rhs.valid()) return LogicalResult::failure();
+
+    auto rt = broadcast_result_type(lhs.type, rhs.type);
+    if (rt.dims.empty() && lhs.type.rank() != 0 && rhs.type.rank() != 0)
+      return LogicalResult::failure();
+
+    auto bl = maybe_broadcast(lhs, rt, ctx);
+    auto br = maybe_broadcast(rhs, rt, ctx);
+    ctx.value_map[node.output(0)] = ctx.builder.emit_divide(bl, br, rt);
+    return LogicalResult::success();
+  }
+};
+
+class PowOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Pow"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto base = ctx.lookup(node.input(0));
+    auto exponent = ctx.lookup(node.input(1));
+    if (!base.valid() || !exponent.valid()) return LogicalResult::failure();
+
+    auto *exp_init = ctx.get_initializer(node.input(1));
+    if (!exp_init) return LogicalResult::failure();
+    auto vals = extract_floats(*exp_init);
+    if (vals.size() != 1 || vals[0] != 2.0f) return LogicalResult::failure();
+
+    // RMSNorm only needs square; use multiply so the generated StableHLO stays
+    // broadly supported by the later teaching pipeline.
+    ctx.value_map[node.output(0)] = ctx.builder.emit_multiply(base, base,
+                                                              base.type);
+    return LogicalResult::success();
+  }
+};
+
+class SqrtOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Sqrt"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto operand = ctx.lookup(node.input(0));
+    if (!operand.valid()) return LogicalResult::failure();
+    ctx.value_map[node.output(0)] = ctx.builder.emit_sqrt(operand);
+    return LogicalResult::success();
+  }
+};
+
+class ReduceMeanOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "ReduceMean"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto input = ctx.lookup(node.input(0));
+    if (!input.valid() || input.type.elem != shlo::ElemType::F32)
+      return LogicalResult::failure();
+
+    auto axes = get_ints_attr(node, "axes");
+    if (axes.empty())
+      for (int64_t i = 0; i < input.type.rank(); ++i) axes.push_back(i);
+    for (auto &axis : axes) {
+      if (axis < 0) axis += input.type.rank();
+      if (axis < 0 || axis >= input.type.rank())
+        return LogicalResult::failure();
+    }
+
+    int64_t reduced_count = 1;
+    for (auto axis : axes) {
+      int64_t dim = input.type.dims[axis];
+      if (dim < 0) return LogicalResult::failure();
+      reduced_count *= dim;
+    }
+
+    shlo::TensorType result = ctx.get_type(node.output(0));
+    if (result.dims.empty() && input.type.rank() != static_cast<int64_t>(axes.size())) {
+      result.elem = input.type.elem;
+      bool keepdims = get_int_attr(node, "keepdims", 1) != 0;
+      for (int64_t i = 0; i < input.type.rank(); ++i) {
+        bool reduced = std::find(axes.begin(), axes.end(), i) != axes.end();
+        if (reduced) {
+          if (keepdims) result.dims.push_back(1);
+        } else {
+          result.dims.push_back(input.type.dims[i]);
+        }
+      }
+    }
+
+    shlo::TensorType scalar{{}, input.type.elem};
+    auto zero = ctx.builder.emit_constant(scalar, "0.0");
+    auto sum = ctx.builder.emit_reduce(input, zero, "stablehlo.add", axes,
+                                       result);
+    auto denom = ctx.builder.emit_constant(scalar,
+                                           std::to_string(reduced_count) + ".0");
+    auto denom_b = maybe_broadcast(denom, result, ctx);
+    ctx.value_map[node.output(0)] = ctx.builder.emit_divide(sum, denom_b,
+                                                            result);
     return LogicalResult::success();
   }
 };
@@ -218,6 +349,52 @@ public:
   }
 };
 
+class SoftmaxOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Softmax"; }
+  int benefit() const override { return 20; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto input = ctx.lookup(node.input(0));
+    if (!input.valid()) return LogicalResult::failure();
+    if (input.type.elem != shlo::ElemType::F32 || input.type.rank() < 1)
+      return LogicalResult::failure();
+
+    int64_t axis = get_int_attr(node, "axis", -1);
+    if (axis < 0) axis += input.type.rank();
+    if (axis < 0 || axis >= input.type.rank()) return LogicalResult::failure();
+
+    shlo::TensorType reduced;
+    reduced.elem = input.type.elem;
+    for (int64_t i = 0; i < input.type.rank(); ++i)
+      if (i != axis) reduced.dims.push_back(input.type.dims[i]);
+
+    shlo::TensorType scalar{{}, input.type.elem};
+    auto neg_inf = ctx.builder.emit_constant(scalar, "-3.402823e+38");
+    auto zero = ctx.builder.emit_constant(scalar, "0.0");
+
+    auto max = ctx.builder.emit_reduce(input, neg_inf, "stablehlo.maximum",
+                                       {axis}, reduced);
+    std::vector<int64_t> broadcast_dims;
+    for (int64_t i = 0; i < input.type.rank(); ++i)
+      if (i != axis) broadcast_dims.push_back(i);
+    auto max_b = ctx.builder.emit_broadcast_in_dim(max, broadcast_dims,
+                                                   input.type);
+
+    auto shifted = ctx.builder.emit_subtract(input, max_b, input.type);
+    auto exp = ctx.builder.emit_exponential(shifted);
+    auto sum = ctx.builder.emit_reduce(exp, zero, "stablehlo.add", {axis},
+                                       reduced);
+    auto sum_b = ctx.builder.emit_broadcast_in_dim(sum, broadcast_dims,
+                                                   input.type);
+
+    ctx.value_map[node.output(0)] = ctx.builder.emit_divide(exp, sum_b,
+                                                            input.type);
+    return LogicalResult::success();
+  }
+};
+
 class ReshapeOpConversion : public ConversionPattern {
 public:
   std::string target_op_type() const override { return "Reshape"; }
@@ -280,8 +457,14 @@ public:
 static void populate_onnx_to_stablehlo_patterns(RewritePatternSet &patterns) {
   patterns.add<AddOpConversion>();
   patterns.add<MulOpConversion>();
+  patterns.add<SubOpConversion>();
+  patterns.add<DivOpConversion>();
+  patterns.add<PowOpConversion>();
+  patterns.add<SqrtOpConversion>();
+  patterns.add<ReduceMeanOpConversion>();
   patterns.add<MatMulOpConversion>();
   patterns.add<ConvOpConversion>();
+  patterns.add<SoftmaxOpConversion>();
   patterns.add<ReshapeOpConversion>();
   patterns.add<TransposeOpConversion>();
 }
@@ -295,8 +478,13 @@ static void setup_conversion_target(ConversionTarget &target) {
   target.addIllegalOp("Add");
   target.addIllegalOp("Mul");
   target.addIllegalOp("Sub");
+  target.addIllegalOp("Div");
+  target.addIllegalOp("Pow");
+  target.addIllegalOp("Sqrt");
+  target.addIllegalOp("ReduceMean");
   target.addIllegalOp("MatMul");
   target.addIllegalOp("Conv");
+  target.addIllegalOp("Softmax");
   target.addIllegalOp("Reshape");
   target.addIllegalOp("Transpose");
 }
@@ -328,8 +516,8 @@ int main(int argc, char **argv) {
   ConversionTarget target;
   setup_conversion_target(target);
   std::cout << "  Legal dialect  : stablehlo.*\n";
-  std::cout << "  Illegal ops    : Add, Mul, Sub, MatMul, Conv, Reshape, "
-               "Transpose\n";
+  std::cout << "  Illegal ops    : Add, Mul, Sub, Div, Pow, Sqrt, ReduceMean, "
+               "MatMul, Conv, Softmax, Reshape, Transpose\n";
 
   RewritePatternSet patterns;
   populate_onnx_to_stablehlo_patterns(patterns);
