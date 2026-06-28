@@ -169,8 +169,8 @@ make run DOMAIN=mlir PASS=memplan         # P12
 | make target | 等价 DOMAIN/PASS | Px | 说明 |
 |-------------|-----------------|-----|------|
 | `make run_graph` | `DOMAIN=mlir PASS=graph` | P1–P3 | 生成 ONNX 测试模型 → 解析 → IR Lowering → 图优化（需 Protobuf + numpy + onnx） |
-| `make run_lowering` | `DOMAIN=mlir PASS=lowering` | P4 | ONNX→StableHLO tier 1(基础) + tier 2(broadcast/dynamic) + tier 3(framework + Softmax/Attention/RMSNorm/RoPE fixture) |
-| `make run_golden` | — | P4 | ONNX Runtime vs NumPy 数值对齐（5 项 tier-3 fixture） |
+| `make run_lowering` | `DOMAIN=mlir PASS=lowering` | P4 | ONNX→StableHLO tier 1(基础) + tier 2(broadcast/dynamic) + tier 3(framework + Softmax/Attention/RMSNorm/LayerNorm/RoPE fixture) |
+| `make run_golden` | — | P4 | ONNX Runtime vs NumPy 数值对齐（6 项 tier-3 fixture） |
 | `make conv_bn_optimized` | `DOMAIN=mlir PASS=conv_bn_fusion` | P5 | `4_` Python 导出 MLIR + `6_` mlir-opt Conv+BN Fusion（需 torch + torch-mlir） |
 | `make run_shlo_opt` | `DOMAIN=mlir PASS=shlo_opt` | P5 | StableHLO 图: 24 ops → Canon/Shape/CSE/DCE/Fusion/Layout/Legal → 7 ops |
 | `make run_linalg` | `DOMAIN=mlir PASS=linalg` | P6 | GEMM+Bias+ReLU: 11 ops → 依赖分析/代价模型/Tile-and-Fuse → 5 ops |
@@ -231,9 +231,23 @@ Pipeline: `gen_test_models.py → run_onnx_parse → run_onnx_to_ir → run_grap
   src/mlir/gpu/lowering_models/lowering_attention.onnx \
   > attention_p4.mlir
 
+./src/mlir/gpu/run_lowering_l3 --mlir-only \
+  src/mlir/gpu/lowering_models/lowering_rmsnorm.onnx \
+  > rmsnorm_p4.mlir
+
+./src/mlir/gpu/run_lowering_l3 --mlir-only \
+  src/mlir/gpu/lowering_models/lowering_rope.onnx \
+  > rope_p4.mlir
+
+./src/mlir/gpu/run_lowering_l3 --mlir-only \
+  src/mlir/gpu/lowering_models/lowering_layernorm.onnx \
+  > layernorm_p4.mlir
+
 # 在 mlir_pass 下（需先构建两仓库）
-ninja -C build test_attention_e2e
+ninja -C build test_transformer_e2e   # Softmax/Attention/RMSNorm/RoPE/LayerNorm 五件套
 ```
+
+P4 导出质量改进（供 `mlir_pass` parser 消费）：`format_float_literal` 规范化浮点字面量；`ReduceMean` 在 `keepdims=1` 时输出 rank-reduced tensor + `reshape`；RoPE cos/sin 常量支持嵌套 `dense<>` 格式。
 
 `--mlir-only` 跳过 ONNX Runtime 数值校验，只输出 `module { func.func @main ... }` 形式的 StableHLO 文本。
 
@@ -408,12 +422,12 @@ Stage 7 为教学级 KVCache 内存规划模拟（非真实推理 runtime cache 
 |------|---------------|-----------|
 | ONNX 解析 / mini IR / 教学模拟 | P1–P3、P6–P12 | — |
 | ONNX → StableHLO lowering | P4 tier 1/2/3 | 消费导出的 `.mlir` |
-| StableHLO 图优化 | P5 模拟 + `6_` Conv+BN plugin | 11 个真实 pass + `AICompilerPlugin` |
+| StableHLO 图优化 | P5 模拟 + `6_` Conv+BN plugin | 15 个真实 pass + `AICompilerPlugin` |
 | Linalg → LLVM → JIT | 概念教学 | `pipe-demo` 完整 pipeline |
-| 数值对齐 golden test | `run_golden`（ONNX Runtime） | — |
-| 跨仓库 Attention e2e | `run_lowering_l3 --mlir-only` | `test_attention_e2e` + LIT |
+| 数值对齐 golden test | `run_golden`（ONNX Runtime，6 项） | — |
+| 跨仓库 Transformer e2e | `run_lowering_l3 --mlir-only`（五件套） | `test_transformer_e2e` + 19 LIT |
 
-推荐验证顺序：先 `cmake --build build --target run_lowering run_golden run_quant_qdq`，再在 `mlir_pass` 执行 `ninja -C build test_attention_e2e test_lit_filecheck`。
+推荐验证顺序：先 `cmake --build build --target run_lowering run_golden run_quant_qdq`，再在 `mlir_pass` 执行 `ninja -C build test_transformer_e2e test_lit_filecheck test_mlir_opt_plugin`。
 
 ---
 

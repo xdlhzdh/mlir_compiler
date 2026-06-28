@@ -104,6 +104,23 @@ def check_rmsnorm(model_dir: Path) -> None:
     print("  PASS lowering_rmsnorm")
 
 
+def check_layernorm(model_dir: Path) -> None:
+    path = model_dir / "lowering_layernorm.onnx"
+    model = onnx.load(str(path))
+    inits = _init_map(model)
+    x = np.array([[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]], dtype=np.float32)
+    eps = float(inits["eps"])
+    gamma = inits["gamma"]
+    beta = inits["beta"]
+    mean = np.mean(x, axis=-1, keepdims=True)
+    centered = x - mean
+    var = np.mean(centered * centered, axis=-1, keepdims=True)
+    expected = centered / np.sqrt(var + eps) * gamma + beta
+    out = _run_ort(path, {"X": x})["Y"]
+    _assert_close("lowering_layernorm", out, expected)
+    print("  PASS lowering_layernorm")
+
+
 def check_rope(model_dir: Path) -> None:
     path = model_dir / "lowering_rope.onnx"
     model = onnx.load(str(path))
@@ -121,6 +138,7 @@ CHECKS = [
     check_softmax,
     check_attention,
     check_rmsnorm,
+    check_layernorm,
     check_rope,
 ]
 

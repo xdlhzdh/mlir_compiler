@@ -116,26 +116,70 @@ inline std::string get_str_attr(const onnx::NodeProto &n,
 
 // ======================== Dense Constant Formatting ========================
 
+inline std::string format_float_literal(float v) {
+  std::ostringstream os;
+  os << v;
+  std::string s = os.str();
+  if (s.find('.') == std::string::npos && s.find('e') == std::string::npos &&
+      s.find('E') == std::string::npos)
+    s += ".0";
+  const size_t epos = s.find_first_of("eE");
+  if (epos != std::string::npos && s.find('.') == std::string::npos)
+    s.insert(epos, ".0");
+  return s;
+}
+
+inline std::string format_dense_nested(const std::vector<float> &data,
+                                       const std::vector<int64_t> &dims,
+                                       size_t offset) {
+  if (dims.size() == 1) {
+    std::ostringstream os;
+    os << "[";
+    for (int64_t i = 0; i < dims[0]; ++i) {
+      if (i) os << ", ";
+      os << format_float_literal(data[offset + static_cast<size_t>(i)]);
+    }
+    os << "]";
+    return os.str();
+  }
+  int64_t slice = 1;
+  for (size_t i = 1; i < dims.size(); ++i)
+    slice *= dims[i];
+  std::ostringstream os;
+  os << "[";
+  for (int64_t i = 0; i < dims[0]; ++i) {
+    if (i) os << ", ";
+    std::vector<int64_t> inner(dims.begin() + 1, dims.end());
+    os << format_dense_nested(data, inner,
+                              offset + static_cast<size_t>(i * slice));
+  }
+  os << "]";
+  return os.str();
+}
+
 inline std::string format_dense(const std::vector<float> &data,
                                 const shlo::TensorType &type) {
   int64_t n = type.num_elements();
   if (n <= 0 || data.empty()) return "0.0";
   if (n == 1) {
-    std::ostringstream os;
-    os << data[0];
-    return os.str();
+    return format_float_literal(data[0]);
   }
+  if (type.rank() > 1 && n <= 64)
+    return format_dense_nested(data, type.dims, 0);
   std::ostringstream os;
   if (n <= 16) {
     os << "[";
     for (int64_t i = 0; i < n && i < (int64_t)data.size(); ++i) {
       if (i) os << ", ";
-      os << data[i];
+      os << format_float_literal(data[i]);
     }
     os << "]";
   } else {
-    os << "[" << data[0] << ", " << data[1] << ", ..., "
-       << data[std::min<size_t>(data.size(), (size_t)n) - 1] << "]";
+    os << "[" << format_float_literal(data[0]) << ", "
+       << format_float_literal(data[1]) << ", ..., "
+       << format_float_literal(
+              data[std::min<size_t>(data.size(), (size_t)n) - 1])
+       << "]";
   }
   return os.str();
 }

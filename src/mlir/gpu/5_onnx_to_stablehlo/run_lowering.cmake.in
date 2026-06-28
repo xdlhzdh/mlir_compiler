@@ -54,6 +54,9 @@ run_exe(${RUN_L3} "${MODEL_DIR}/lowering_attention.onnx")
 banner("P4 tier 3: Framework — lowering_rmsnorm.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_rmsnorm.onnx")
 
+banner("P4 tier 3: Framework — lowering_layernorm.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_layernorm.onnx")
+
 banner("P4 tier 3: Framework — lowering_rope.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_rope.onnx")
 

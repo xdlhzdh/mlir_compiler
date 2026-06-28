@@ -15,6 +15,7 @@ Models:
     lowering_softmax.onnx           — Softmax(axis=-1) decomposition
     lowering_attention.onnx         — Scaled dot-product attention subgraph
     lowering_rmsnorm.onnx           — RMSNorm decomposition
+    lowering_layernorm.onnx         — LayerNorm decomposition
     lowering_rope.onnx              — RoPE (rotate_half + sin/cos) decomposition
 """
 
@@ -207,6 +208,38 @@ def make_lowering_rmsnorm(out_dir):
     _save(m, "lowering_rmsnorm.onnx", out_dir)
 
 
+def make_lowering_layernorm(out_dir):
+    """X(2,4), gamma(4), beta(4) → LayerNorm(eps=1e-5) via primitive ops."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    gamma = numpy_helper.from_array(np.ones(4, dtype=np.float32), "gamma")
+    beta = numpy_helper.from_array(np.zeros(4, dtype=np.float32), "beta")
+    eps = numpy_helper.from_array(np.array(1.0e-5, dtype=np.float32), "eps")
+
+    mean = helper.make_node("ReduceMean", ["X"], ["mean"],
+                            name="ln_mean", axes=[-1], keepdims=1)
+    centered = helper.make_node("Sub", ["X", "mean"], ["centered"],
+                                name="ln_center")
+    sq = helper.make_node("Mul", ["centered", "centered"], ["sq"], name="ln_sq")
+    var = helper.make_node("ReduceMean", ["sq"], ["var"],
+                           name="ln_var", axes=[-1], keepdims=1)
+    add_eps = helper.make_node("Add", ["var", "eps"], ["var_eps"],
+                               name="ln_add_eps")
+    denom = helper.make_node("Sqrt", ["var_eps"], ["denom"], name="ln_sqrt")
+    norm = helper.make_node("Div", ["centered", "denom"], ["norm"],
+                            name="ln_div")
+    scaled = helper.make_node("Mul", ["norm", "gamma"], ["scaled"],
+                              name="ln_scale")
+    out = helper.make_node("Add", ["scaled", "beta"], ["Y"], name="ln_out")
+
+    graph = helper.make_graph(
+        [mean, centered, sq, var, add_eps, denom, norm, scaled, out],
+        "layernorm", [X], [Y], initializer=[gamma, beta, eps])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_layernorm.onnx", out_dir)
+
+
 def make_lowering_rope(out_dir):
     """X(1,2,4) + precomputed cos/sin(1,2,4) → RoPE via rotate_half decomposition.
     out = X * cos + rotate_half(X) * sin
@@ -275,6 +308,7 @@ def main():
     make_lowering_softmax(out_dir)
     make_lowering_attention(out_dir)
     make_lowering_rmsnorm(out_dir)
+    make_lowering_layernorm(out_dir)
     make_lowering_rope(out_dir)
     print("Done.")
 

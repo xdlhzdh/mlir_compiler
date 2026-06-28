@@ -324,9 +324,9 @@ public:
     }
 
     shlo::TensorType result = ctx.get_type(node.output(0));
+    bool keepdims = get_int_attr(node, "keepdims", 1) != 0;
     if (result.dims.empty() && input.type.rank() != static_cast<int64_t>(axes.size())) {
       result.elem = input.type.elem;
-      bool keepdims = get_int_attr(node, "keepdims", 1) != 0;
       for (int64_t i = 0; i < input.type.rank(); ++i) {
         bool reduced = std::find(axes.begin(), axes.end(), i) != axes.end();
         if (reduced) {
@@ -337,10 +337,19 @@ public:
       }
     }
 
+    shlo::TensorType reduced_type = input.type;
+    reduced_type.dims.clear();
+    for (int64_t i = 0; i < input.type.rank(); ++i) {
+      if (std::find(axes.begin(), axes.end(), i) == axes.end())
+        reduced_type.dims.push_back(input.type.dims[i]);
+    }
+
     shlo::TensorType scalar{{}, input.type.elem};
     auto zero = ctx.builder.emit_constant(scalar, "0.0");
     auto sum = ctx.builder.emit_reduce(input, zero, "stablehlo.add", axes,
-                                       result);
+                                       reduced_type);
+    if (keepdims)
+      sum = ctx.builder.emit_reshape(sum, result);
     auto denom = ctx.builder.emit_constant(scalar,
                                            std::to_string(reduced_count) + ".0");
     auto denom_b = maybe_broadcast(denom, result, ctx);
