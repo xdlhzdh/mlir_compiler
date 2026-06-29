@@ -244,6 +244,32 @@ public:
     return {name, operand.type};
   }
 
+  Value emit_negate(const Value &operand) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.negate " << operand.name << " : " << operand.type.str();
+    append({"stablehlo.negate", name, operand.type, a.str()});
+    return {name, operand.type};
+  }
+
+  Value emit_erf(const Value &operand) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "chlo.erf " << operand.name << " : " << operand.type.str()
+      << " -> " << operand.type.str();
+    append({"chlo.erf", name, operand.type, a.str()});
+    return {name, operand.type};
+  }
+
+  Value emit_convert(const Value &operand, const TensorType &result_type) {
+    auto name = fresh_ssa();
+    std::ostringstream a;
+    a << "stablehlo.convert " << operand.name << " : (" << operand.type.str()
+      << ") -> " << result_type.str();
+    append({"stablehlo.convert", name, result_type, a.str()});
+    return {name, result_type};
+  }
+
   // ---- stablehlo.slice ----
 
   Value emit_slice(const Value &operand,

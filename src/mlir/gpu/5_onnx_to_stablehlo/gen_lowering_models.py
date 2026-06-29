@@ -17,6 +17,11 @@ Models:
     lowering_rmsnorm.onnx           — RMSNorm decomposition
     lowering_layernorm.onnx         — LayerNorm decomposition
     lowering_rope.onnx              — RoPE (rotate_half + sin/cos) decomposition
+    lowering_gelu.onnx              — GELU via Erf decomposition
+    lowering_swiglu.onnx            — SwiGLU silu(gate)*up decomposition
+    lowering_matmul_bias.onnx       — MatMul + constant bias add
+    lowering_qdq_matmul.onnx        — dequant chains + MatMul (P11 concept)
+    lowering_horizontal_gemm.onnx   — shared-LHS MatMul pair + Concat (horizontal fusion)
 """
 
 from pathlib import Path
@@ -123,18 +128,18 @@ def make_lowering_conv_full(out_dir):
 
 
 def make_lowering_dynamic(out_dir):
-    """X(?x3) + bias(3) → MatMul(add_out, W(3,4)) → Y(?x4)
+    """X(?x3) + bias(?x3) → MatMul(add_out, W(3,4)) → Y(?x4)
     Tests dynamic (symbolic) batch dimension handling."""
     X = helper.make_tensor_value_info("X", TensorProto.FLOAT, ["batch", 3])
+    Bias = helper.make_tensor_value_info("bias", TensorProto.FLOAT, ["batch", 3])
     Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, ["batch", 4])
-    bias = numpy_helper.from_array(np.ones(3, dtype=np.float32), "bias")
     W = numpy_helper.from_array(np.eye(3, 4, dtype=np.float32), "W")
 
     add_n = helper.make_node("Add", ["X", "bias"], ["add_out"], name="add_0")
     mm_n = helper.make_node("MatMul", ["add_out", "W"], ["Y"], name="mm_0")
 
-    graph = helper.make_graph([add_n, mm_n], "dynamic", [X], [Y],
-                              initializer=[bias, W])
+    graph = helper.make_graph([add_n, mm_n], "dynamic", [X, Bias], [Y],
+                              initializer=[W])
     m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
     m = onnx.shape_inference.infer_shapes(m)
     _save(m, "lowering_dynamic.onnx", out_dir)
@@ -295,6 +300,234 @@ def make_lowering_rope(out_dir):
     _save(m, "lowering_rope.onnx", out_dir)
 
 
+def make_lowering_gelu(out_dir):
+    """X(2,4) → GELU via 0.5 * x * (1 + erf(x / sqrt(2)))."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    half = numpy_helper.from_array(np.array(0.5, dtype=np.float32), "half")
+    one = numpy_helper.from_array(np.array(1.0, dtype=np.float32), "one")
+    two = numpy_helper.from_array(np.array(2.0, dtype=np.float32), "two")
+
+    sqrt2 = helper.make_node("Sqrt", ["two"], ["sqrt2"], name="gelu_sqrt2")
+    scaled = helper.make_node("Div", ["X", "sqrt2"], ["scaled"], name="gelu_scaled")
+    erf = helper.make_node("Erf", ["scaled"], ["erf_val"], name="gelu_erf")
+    inner = helper.make_node("Add", ["one", "erf_val"], ["inner"], name="gelu_inner")
+    half_x = helper.make_node("Mul", ["X", "half"], ["half_x"], name="gelu_half_x")
+    out = helper.make_node("Mul", ["half_x", "inner"], ["Y"], name="gelu_out")
+
+    graph = helper.make_graph(
+        [sqrt2, scaled, erf, inner, half_x, out],
+        "gelu", [X], [Y], initializer=[half, one, two])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_gelu.onnx", out_dir)
+
+
+def make_lowering_swiglu(out_dir):
+    """Gate(2,4), Up(2,4) → SwiGLU = silu(gate) * up, silu(x)=x/(1+exp(-x))."""
+    Gate = helper.make_tensor_value_info("Gate", TensorProto.FLOAT, [2, 4])
+    Up = helper.make_tensor_value_info("Up", TensorProto.FLOAT, [2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    one = numpy_helper.from_array(np.array(1.0, dtype=np.float32), "one")
+
+    neg = helper.make_node("Neg", ["Gate"], ["neg_gate"], name="swiglu_neg")
+    exp = helper.make_node("Exp", ["neg_gate"], ["exp_neg"], name="swiglu_exp")
+    denom = helper.make_node("Add", ["one", "exp_neg"], ["denom"], name="swiglu_denom")
+    sigmoid = helper.make_node("Div", ["one", "denom"], ["sigmoid"], name="swiglu_sigmoid")
+    silu = helper.make_node("Mul", ["Gate", "sigmoid"], ["silu"], name="swiglu_silu")
+    out = helper.make_node("Mul", ["silu", "Up"], ["Y"], name="swiglu_out")
+
+    graph = helper.make_graph(
+        [neg, exp, denom, sigmoid, silu, out],
+        "swiglu", [Gate, Up], [Y], initializer=[one])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_swiglu.onnx", out_dir)
+
+
+def make_lowering_matmul_bias(out_dir):
+    """X(2,3) → MatMul(W(3,4)) → Add(bias(4)) → Y(2,4)."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 3])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    W = numpy_helper.from_array(np.eye(3, 4, dtype=np.float32), "W")
+    bias = numpy_helper.from_array(np.full(4, 0.25, dtype=np.float32), "bias")
+
+    mm = helper.make_node("MatMul", ["X", "W"], ["mm_out"], name="mm_0")
+    add = helper.make_node("Add", ["mm_out", "bias"], ["Y"], name="add_bias")
+
+    graph = helper.make_graph([mm, add], "matmul_bias", [X], [Y],
+                              initializer=[W, bias])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_matmul_bias.onnx", out_dir)
+
+
+def make_lowering_qdq_matmul(out_dir):
+    """X(2,3), W(3,4) → dq chains (x-zp)*scale → MatMul → Y(2,4)."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 3])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    W = numpy_helper.from_array(np.eye(3, 4, dtype=np.float32), "W")
+    scale_x = numpy_helper.from_array(np.array(0.1, dtype=np.float32), "scale_x")
+    zp_x = numpy_helper.from_array(np.array(0.0, dtype=np.float32), "zp_x")
+    scale_w = numpy_helper.from_array(np.array(0.2, dtype=np.float32), "scale_w")
+    zp_w = numpy_helper.from_array(np.array(0.0, dtype=np.float32), "zp_w")
+
+    sub_x = helper.make_node("Sub", ["X", "zp_x"], ["sub_x"], name="sub_x")
+    dq_x = helper.make_node("Mul", ["sub_x", "scale_x"], ["dq_x"], name="dq_x")
+    sub_w = helper.make_node("Sub", ["W", "zp_w"], ["sub_w"], name="sub_w")
+    dq_w = helper.make_node("Mul", ["sub_w", "scale_w"], ["dq_w"], name="dq_w")
+    mm = helper.make_node("MatMul", ["dq_x", "dq_w"], ["Y"], name="mm_0")
+
+    graph = helper.make_graph(
+        [sub_x, dq_x, sub_w, dq_w, mm],
+        "qdq_matmul", [X], [Y],
+        initializer=[W, scale_x, zp_x, scale_w, zp_w])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_qdq_matmul.onnx", out_dir)
+
+
+def make_lowering_transformer_block(out_dir):
+    """Pre-LN teaching block: X(2,4) → RMSNorm → Attention → residual
+    → RMSNorm → SwiGLU(gate=up=norm) → residual → Y(2,4)."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+
+    weight = numpy_helper.from_array(np.ones(4, dtype=np.float32), "weight")
+    two = numpy_helper.from_array(np.array(2.0, dtype=np.float32), "two")
+    eps = numpy_helper.from_array(np.array(1.0e-5, dtype=np.float32), "eps")
+    Kt = numpy_helper.from_array(
+        np.array([[[1.0, 0.0], [0.0, 1.0], [0.0, 0.0], [0.0, 0.0]]],
+                 dtype=np.float32),
+        "Kt")
+    V = numpy_helper.from_array(
+        np.array([[[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]]],
+                 dtype=np.float32),
+        "V")
+    scale = numpy_helper.from_array(np.array(0.5, dtype=np.float32), "scale")
+    shape_124 = numpy_helper.from_array(
+        np.array([1, 2, 4], dtype=np.int64), "shape_124")
+    shape_24 = numpy_helper.from_array(
+        np.array([2, 4], dtype=np.int64), "shape_24")
+    one = numpy_helper.from_array(np.array(1.0, dtype=np.float32), "one")
+
+    square1 = helper.make_node("Pow", ["X", "two"], ["x2_1"], name="rms1_square")
+    mean1 = helper.make_node("ReduceMean", ["x2_1"], ["mean_1"],
+                             name="rms1_mean", axes=[-1], keepdims=1)
+    add_eps1 = helper.make_node("Add", ["mean_1", "eps"], ["var_eps_1"],
+                                name="rms1_add_eps")
+    sqrt1 = helper.make_node("Sqrt", ["var_eps_1"], ["denom_1"], name="rms1_sqrt")
+    norm1 = helper.make_node("Div", ["X", "denom_1"], ["norm1"], name="rms1_div")
+    norm1_w = helper.make_node("Mul", ["norm1", "weight"], ["norm1_w"],
+                               name="rms1_weight")
+
+    q = helper.make_node("Reshape", ["norm1_w", "shape_124"], ["Q"], name="reshape_q")
+    scores = helper.make_node("MatMul", ["Q", "Kt"], ["scores"], name="attn_qk")
+    scaled = helper.make_node("Mul", ["scores", "scale"], ["scaled_scores"],
+                              name="attn_scale")
+    probs = helper.make_node("Softmax", ["scaled_scores"], ["probs"],
+                             name="attn_softmax", axis=-1)
+    attn = helper.make_node("MatMul", ["probs", "V"], ["attn_out"], name="attn_pv")
+    attn_2d = helper.make_node("Reshape", ["attn_out", "shape_24"], ["attn_2d"],
+                               name="reshape_attn")
+
+    h = helper.make_node("Add", ["X", "attn_2d"], ["h"], name="res1")
+
+    square2 = helper.make_node("Pow", ["h", "two"], ["x2_2"], name="rms2_square")
+    mean2 = helper.make_node("ReduceMean", ["x2_2"], ["mean_2"],
+                             name="rms2_mean", axes=[-1], keepdims=1)
+    add_eps2 = helper.make_node("Add", ["mean_2", "eps"], ["var_eps_2"],
+                                name="rms2_add_eps")
+    sqrt2 = helper.make_node("Sqrt", ["var_eps_2"], ["denom_2"], name="rms2_sqrt")
+    norm2 = helper.make_node("Div", ["h", "denom_2"], ["norm2"], name="rms2_div")
+    norm2_w = helper.make_node("Mul", ["norm2", "weight"], ["norm2_w"],
+                               name="rms2_weight")
+
+    neg = helper.make_node("Neg", ["norm2_w"], ["neg_gate"], name="swiglu_neg")
+    exp = helper.make_node("Exp", ["neg_gate"], ["exp_neg"], name="swiglu_exp")
+    denom = helper.make_node("Add", ["one", "exp_neg"], ["denom_swiglu"],
+                             name="swiglu_denom")
+    sigmoid = helper.make_node("Div", ["one", "denom_swiglu"], ["sigmoid"],
+                               name="swiglu_sigmoid")
+    silu = helper.make_node("Mul", ["norm2_w", "sigmoid"], ["silu"],
+                            name="swiglu_silu")
+    ffn = helper.make_node("Mul", ["silu", "norm2_w"], ["ffn_out"],
+                           name="swiglu_out")
+
+    out = helper.make_node("Add", ["h", "ffn_out"], ["Y"], name="res2")
+
+    nodes = [
+        square1, mean1, add_eps1, sqrt1, norm1, norm1_w,
+        q, scores, scaled, probs, attn, attn_2d, h,
+        square2, mean2, add_eps2, sqrt2, norm2, norm2_w,
+        neg, exp, denom, sigmoid, silu, ffn, out,
+    ]
+    inits = [weight, two, eps, Kt, V, scale, shape_124, shape_24, one]
+    graph = helper.make_graph(nodes, "transformer_block", [X], [Y], initializer=inits)
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_transformer_block.onnx", out_dir)
+
+
+def make_lowering_matmul_softmax(out_dir):
+    """A(2,4) @ B(4,4) → MatMul → Softmax(axis=-1) → Y(2,4).
+    Exercises producer-consumer fusion (GEMM scores → softmax exp)."""
+    A = helper.make_tensor_value_info("A", TensorProto.FLOAT, [2, 4])
+    B = helper.make_tensor_value_info("B", TensorProto.FLOAT, [4, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    B_init = numpy_helper.from_array(
+        np.eye(4, dtype=np.float32), "B")
+
+    mm = helper.make_node("MatMul", ["A", "B"], ["scores"], name="mm_0")
+    softmax = helper.make_node("Softmax", ["scores"], ["Y"],
+                               name="softmax_0", axis=-1)
+    graph = helper.make_graph([mm, softmax], "matmul_softmax", [A], [Y],
+                              initializer=[B_init])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_matmul_softmax.onnx", out_dir)
+
+
+def make_lowering_layout_conv(out_dir):
+    """X(NCHW 1x2x2x2) → Conv → Transpose[0,2,3,1] → Y(NHWC layout teaching)."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [1, 2, 2, 2])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 2, 2, 2])
+    W = numpy_helper.from_array(
+        np.full((2, 2, 1, 1), 0.5, dtype=np.float32), "W")
+
+    conv = helper.make_node("Conv", ["X", "W"], ["conv_out"], name="conv_0",
+                            kernel_shape=[1, 1], pads=[0, 0, 0, 0],
+                            strides=[1, 1])
+    transpose = helper.make_node(
+        "Transpose", ["conv_out"], ["Y"], name="to_nhwc", perm=[0, 2, 3, 1])
+    graph = helper.make_graph([conv, transpose], "layout_conv", [X], [Y],
+                              initializer=[W])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_layout_conv.onnx", out_dir)
+
+
+def make_lowering_horizontal_gemm(out_dir):
+    """X(2,3) → MatMul(W1), MatMul(W2) → Concat(axis=1) → Y(2,4)."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 3])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [2, 4])
+    W1 = numpy_helper.from_array(
+        np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float32), "W1")
+    W2 = numpy_helper.from_array(
+        np.array([[2.0, 0.0], [0.0, 2.0], [1.0, 1.0]], dtype=np.float32), "W2")
+
+    mm1 = helper.make_node("MatMul", ["X", "W1"], ["y1"], name="mm_1")
+    mm2 = helper.make_node("MatMul", ["X", "W2"], ["y2"], name="mm_2")
+    concat = helper.make_node("Concat", ["y1", "y2"], ["Y"],
+                              name="concat_0", axis=1)
+
+    graph = helper.make_graph([mm1, mm2, concat], "horizontal_gemm", [X], [Y],
+                              initializer=[W1, W2])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_horizontal_gemm.onnx", out_dir)
+
+
 def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -310,6 +543,14 @@ def main():
     make_lowering_rmsnorm(out_dir)
     make_lowering_layernorm(out_dir)
     make_lowering_rope(out_dir)
+    make_lowering_gelu(out_dir)
+    make_lowering_swiglu(out_dir)
+    make_lowering_matmul_bias(out_dir)
+    make_lowering_qdq_matmul(out_dir)
+    make_lowering_matmul_softmax(out_dir)
+    make_lowering_layout_conv(out_dir)
+    make_lowering_horizontal_gemm(out_dir)
+    make_lowering_transformer_block(out_dir)
     print("Done.")
 
 

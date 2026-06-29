@@ -60,5 +60,29 @@ run_exe(${RUN_L3} "${MODEL_DIR}/lowering_layernorm.onnx")
 banner("P4 tier 3: Framework — lowering_rope.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_rope.onnx")
 
+banner("P4 tier 3: Framework — lowering_gelu.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_gelu.onnx")
+
+banner("P4 tier 3: Framework — lowering_swiglu.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_swiglu.onnx")
+
+banner("P4 tier 3: Framework — lowering_matmul_bias.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_matmul_bias.onnx")
+
+banner("P4 tier 3: Framework — lowering_layout_conv.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_layout_conv.onnx")
+
+banner("P4 tier 3: Framework — lowering_qdq_matmul.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_qdq_matmul.onnx")
+
+banner("P4 tier 3: Framework — lowering_horizontal_gemm.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_horizontal_gemm.onnx")
+
+banner("P4 tier 3: Framework — lowering_transformer_block.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_transformer_block.onnx")
+
+banner("P4 tier 3: Framework — quant_qdq_matmul.onnx (P11 Q/DQ)")
+run_exe(${RUN_L3} "${QUANT_MODEL_DIR}/quant_qdq_matmul.onnx")
+
 message(STATUS "")
 message(STATUS "All P4 lowering tiers (1–3) completed successfully.")

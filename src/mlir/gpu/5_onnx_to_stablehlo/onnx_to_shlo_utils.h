@@ -297,6 +297,16 @@ struct Context {
       if (type.elem == shlo::ElemType::I64 || type.elem == shlo::ElemType::I32) {
         auto data = extract_int64s(init);
         repr = format_dense_int64(data, type);
+      } else if (type.elem == shlo::ElemType::I8) {
+        std::vector<int64_t> data;
+        if (!init.raw_data().empty()) {
+          for (unsigned char c : init.raw_data())
+            data.push_back(static_cast<int64_t>(c));
+        } else {
+          for (int i = 0; i < init.int32_data_size(); ++i)
+            data.push_back(init.int32_data(i));
+        }
+        repr = format_dense_int64(data, type);
       } else {
         auto data = extract_floats(init);
         repr = format_dense(data, type);

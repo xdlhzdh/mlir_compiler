@@ -917,6 +917,102 @@ O = P @ V        → [N, d]
 - IO 复杂度从 O(N² d) 降到 O(N² d² / M)（M = SRAM 大小）
 - 这是 **算子融合 + 内存优化** 的完美结合
 
+### Q14.3: GELU 在编译器里通常如何 lower？与 ReLU 相比难点在哪？
+
+**答：**
+
+**数学定义（常用近似）：**
+```
+GELU(x) ≈ 0.5 * x * (1 + erf(x / sqrt(2)))
+```
+
+**Lowering 路径：**
+1. **分解为 primitive ops**：`Div`（除以 √2）→ `Erf` → `Add`（+1）→ `Mul`（×0.5×x）
+2. **Erf 方言**：StableHLO 无原生 `erf`，常落到 `chlo.erf` 或自定义 lowering
+3. **Fusion 机会**：整链可融合为单 kernel，避免中间 tensor
+
+**与 ReLU 对比：** GELU 含超越函数 `erf`，融合难度高于纯 elementwise 的 ReLU。
+
+**本项目对应：** `mlir_compiler` P4 `lowering_gelu.onnx` + `chlo.erf`；`mlir_pass` `gelu-legalize` 标注 `aicom.gelu_canonicalized`。
+
+### Q14.4: SwiGLU 是什么？编译器如何识别并优化？
+
+**答：**
+
+**定义（LLM FFN 常用）：** `SwiGLU(gate, up) = silu(gate) * up`，其中 `silu(x) = x / (1 + exp(-x))`。
+
+**图结构特征：** `gate` 经 `Neg → Exp → Add(1) → Div` 得 sigmoid，再与 `gate` 相乘得 silu，最终与 `up` 逐元素乘。
+
+**编译优化：** 子图匹配标注 SwiGLU 边界；silu + 逐元素乘可 kernel 融合。
+
+**本项目对应：** `lowering_swiglu.onnx`；`swiglu-legalize` 标注 `aicom.swiglu_canonicalized`。
+
+### Q14.5: MatMul + Bias 融合为什么常见？如何实现？
+
+**答：**
+
+线性层 `Y = X @ W + b` 极常见；分离 GEMM 与 bias add 多一次内存往返。融合后 bias 在 GEMM epilogue 累加。
+
+**图模式：** `add(dot_general(x,w), broadcast(bias))`。
+
+**本项目对应：** `matmul-bias-fusion` 标注 `aicom.matmul_bias_fused`；P4 `lowering_matmul_bias.onnx`。
+
+### Q14.6: 大模型推理中的 Graph Partitioning 解决什么问题？
+
+**答：**
+
+单卡放不下权重/激活时需切分图并插入通信。常见策略：Tensor Parallel（权重切分 + AllReduce）、Pipeline Parallel（按层 stage + P2P）、Expert Parallel（MoE AllToAll）。
+
+编译器职责：划分 subgraph、在边界插入通信节点、估算通信量与计算量平衡。
+
+**本项目对应：** P13 `16_graph_partition/` 教学模拟（无真实多卡 runtime）。
+
+### Q14.7: ONNX Q/DQ 量化图在编译器前端如何处理？
+
+**答：**
+
+`DQ: (q - zp) * scale` 将 int8 恢复为 float；`Q` 反向量化。编译器识别 `DQ → Compute → Q` 子图，对双端 DQ 的 MatMul 可标注 QDQ 边界或改写为 QLinear 算子。
+
+**本项目对应：** P11 `quant_qdq_matmul.onnx`；P4 `lowering_qdq_matmul.onnx`；`mlir_pass` `qdq-legalize` + `test_quant_e2e`。
+
+### Q14.8: Horizontal GEMM 融合是什么？编译器如何做？
+
+**答：**
+
+**场景：** 多个小 GEMM 共享同一输入激活 `X`，输出在特征维拼接，常见于 MoE 门控或多头投影拆分：
+```
+Y1 = X @ W1
+Y2 = X @ W2
+Y = concat(Y1, Y2, axis=-1)
+```
+
+**优化思路：** 将 `W1`、`W2` 在输出维拼接为 `W = [W1|W2]`，一次大 GEMM `Y = X @ W` 替代两次小 GEMM + concat，提升 GPU 利用率、减少 kernel launch。
+
+**编译器实现：**
+1. **模式匹配**：`Concat` 的操作数均为 `DotGeneral`，且 `lhs` 相同
+2. **合法性**：contracting 维一致；concat 维为输出特征维
+3. **改写**：合并权重常量，或标注融合边界供后续 codegen 选用 batched/strided GEMM
+
+**本项目对应：** `horizontal-gemm-fusion` 标注 `aicom.horizontal_gemm_fused`；P4 `lowering_horizontal_gemm.onnx`。
+
+### Q14.9: Elementwise 链融合在 mlir_pass 中如何体现？
+
+**答：** 识别 `maximum(add/mul(...), 0)` 或 `clamp(0, add/mul(...), +inf)` 的 ReLU 边界，标注 `aicom.elementwise_chain_fused`（教学标注，不强制 kernel 融合）。
+
+**本项目对应：** `elementwise-chain-legalize`；LIT `elementwise_chain_legalize.mlir`。
+
+### Q14.10: Producer-Consumer 融合（MatMul → Softmax）如何标注？
+
+**答：** 当 `dot_general` 的 scores 经 stable softmax 分解进入 `exp(x - max)` 时，在 `exponential` 上标注 `aicom.producer_consumer_fused`，表示 producer GEMM 与 consumer softmax 的融合边界。
+
+**本项目对应：** `producer-consumer-legalize`；P4 `lowering_matmul_softmax.onnx`；`run_transformer_e2e` matmul_softmax case。
+
+### Q14.11: 动态 Shape 跨仓库 e2e 如何验证？
+
+**答：** P4 tier 2 `lowering_dynamic.onnx`（动态 batch + bias 输入）经 `run_level2 --mlir-only` 导出 StableHLO，在 `mlir_pass` 跑 fusion/linalg 并 grep `tensor<?x` 与 `stablehlo.dot_general`；`run_golden` 对 batch=2/4 两档做 ORT vs NumPy。
+
+**本项目对应：** `scripts/run_dynamic_e2e.sh`；`test_dynamic_e2e`；`run_lowering_golden.check_dynamic`。
+
 ---
 
 ## 15. 性能分析与调优
@@ -1014,6 +1110,11 @@ O = P @ V        → [N, d]
 - [ ] Occupancy 计算
 - [ ] INT8 量化原理（symmetric/affine, per-tensor/per-channel）
 - [ ] Conv+BN Fusion 数学推导
+- [ ] GELU / SwiGLU lowering 与融合边界
+- [ ] MatMul+Bias epilogue 融合
+- [ ] Horizontal GEMM（共享 LHS + concat）
+- [ ] Graph Partitioning（TP/PP 与通信插入）
+- [ ] ONNX Q/DQ 图识别与 DQ 链 lowering
 - [ ] Memory liveness analysis + buffer reuse
 - [ ] Roofline model（compute-bound vs memory-bound）
 - [ ] FlashAttention 在线 softmax 原理

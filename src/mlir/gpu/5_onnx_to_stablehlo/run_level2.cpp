@@ -377,43 +377,59 @@ static bool dispatch_l2(const onnx::NodeProto &node, Context &ctx) {
 // ====================================================================
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <model.onnx>\n";
+  bool mlirOnly = false;
+  std::string modelPath;
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--mlir-only")
+      mlirOnly = true;
+    else if (modelPath.empty())
+      modelPath = arg;
+  }
+  if (modelPath.empty()) {
+    std::cerr << "Usage: " << argv[0] << " [--mlir-only] <model.onnx>\n";
     return 1;
   }
 
   onnx::ModelProto model;
-  if (!load_model(argv[1], model)) return 1;
+  if (!load_model(modelPath, model)) return 1;
 
-  std::cout
-      << "====================================================\n"
-      << " Level 2: ONNX -> StableHLO (Broadcast / Dynamic /\n"
-      << "          Attribute Mapping / Error Handling)\n"
-      << "====================================================\n\n";
-  std::cout << "Model : " << argv[1] << "\n";
-  std::cout << "Graph : " << model.graph().name() << "\n";
-  std::cout << "Nodes : " << model.graph().node_size() << "\n\n";
+  if (!mlirOnly) {
+    std::cout
+        << "====================================================\n"
+        << " Level 2: ONNX -> StableHLO (Broadcast / Dynamic /\n"
+        << "          Attribute Mapping / Error Handling)\n"
+        << "====================================================\n\n";
+    std::cout << "Model : " << modelPath << "\n";
+    std::cout << "Graph : " << model.graph().name() << "\n";
+    std::cout << "Nodes : " << model.graph().node_size() << "\n\n";
+  }
 
   Context ctx(model.graph());
   ctx.init();
   ctx.create_func_args();
 
-  // Report dynamic inputs
-  for (auto &arg : ctx.func.args)
-    if (arg.type.is_dynamic())
-      ctx.info("Dynamic input: " + arg.name + " : " + arg.type.str());
+  if (!mlirOnly) {
+    for (auto &arg : ctx.func.args)
+      if (arg.type.is_dynamic())
+        ctx.info("Dynamic input: " + arg.name + " : " + arg.type.str());
+  }
 
   ctx.emit_initializers();
 
-  std::cout << "\n--- Converting nodes ---\n";
+  if (!mlirOnly) std::cout << "\n--- Converting nodes ---\n";
   for (auto &node : model.graph().node()) {
-    std::cout << "  " << node.op_type();
-    if (!node.name().empty()) std::cout << " (" << node.name() << ")";
-    std::cout << " -> ";
+    if (!mlirOnly) {
+      std::cout << "  " << node.op_type();
+      if (!node.name().empty()) std::cout << " (" << node.name() << ")";
+      std::cout << " -> ";
+    }
     if (dispatch_l2(node, ctx)) {
-      auto v = ctx.lookup(node.output(0));
-      std::cout << "OK  " << v.name << " : " << v.type.str() << "\n";
-    } else {
+      if (!mlirOnly) {
+        auto v = ctx.lookup(node.output(0));
+        std::cout << "OK  " << v.name << " : " << v.type.str() << "\n";
+      }
+    } else if (!mlirOnly) {
       std::cout << "SKIPPED\n";
     }
   }
@@ -422,6 +438,11 @@ int main(int argc, char **argv) {
 
   shlo::ModuleOp module;
   module.funcs.push_back(ctx.func);
+
+  if (mlirOnly) {
+    module.print(std::cout);
+    return ctx.errors > 0 ? 1 : 0;
+  }
 
   std::cout << "\n--- Generated StableHLO MLIR ---\n\n";
   module.print(std::cout);

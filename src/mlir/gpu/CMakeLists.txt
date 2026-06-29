@@ -100,6 +100,7 @@ if(Protobuf_FOUND)
 
   # Lowering 测试模型生成
   set(LOWERING_MODEL_DIR ${CMAKE_CURRENT_BINARY_DIR}/lowering_models)
+  set(QUANT_MODEL_DIR ${CMAKE_CURRENT_BINARY_DIR}/quant_models)
   add_custom_target(gen_lowering_models
     COMMAND ${CMAKE_COMMAND} -E make_directory ${LOWERING_MODEL_DIR}
     COMMAND ${Python3_EXECUTABLE} ${ONNX_TO_STABLEHLO_DIR}/gen_lowering_models.py ${LOWERING_MODEL_DIR}
@@ -118,14 +119,16 @@ if(Protobuf_FOUND)
       -DRUN_L2=$<TARGET_FILE:run_lowering_l2>
       -DRUN_L3=$<TARGET_FILE:run_lowering_l3>
       -DMODEL_DIR=${LOWERING_MODEL_DIR}
+      -DQUANT_MODEL_DIR=${QUANT_MODEL_DIR}
       -P ${CMAKE_CURRENT_BINARY_DIR}/run_lowering.cmake
-    DEPENDS run_lowering_l1 run_lowering_l2 run_lowering_l3 gen_lowering_models
+    DEPENDS run_lowering_l1 run_lowering_l2 run_lowering_l3 gen_lowering_models gen_quant_models
     COMMENT "Running full P4 ONNX→StableHLO lowering (tiers 1+2+3)")
 
   add_custom_target(run_golden
     COMMAND ${Python3_EXECUTABLE}
       ${ONNX_TO_STABLEHLO_DIR}/run_lowering_golden.py ${LOWERING_MODEL_DIR}
-    DEPENDS gen_lowering_models
+      --quant-dir ${QUANT_MODEL_DIR}
+    DEPENDS gen_lowering_models gen_quant_models
     COMMENT "Running P4 golden numerical checks (ONNX Runtime vs NumPy)")
 else()
   message(WARNING "Protobuf not found. P1~P3 targets will not be built.")
@@ -258,6 +261,18 @@ add_custom_target(run_memplan
   COMMAND $<TARGET_FILE:run_memory_planning>
   DEPENDS run_memory_planning
   COMMENT "Running Memory Planning pipeline (Liveness→Interference→OffsetPlan→Reuse→InPlace→Summary)")
+
+# ─── P13（16_graph_partition）：图划分（教学模拟）────────────────────────────
+
+set(GPART_DIR ${CMAKE_CURRENT_SOURCE_DIR}/16_graph_partition)
+add_executable(run_graph_partition ${GPART_DIR}/run_graph_partition.cpp)
+target_include_directories(run_graph_partition PRIVATE ${GPART_DIR})
+target_compile_features(run_graph_partition PRIVATE cxx_std_17)
+
+add_custom_target(run_graph_partition_demo
+  COMMAND $<TARGET_FILE:run_graph_partition>
+  DEPENDS run_graph_partition
+  COMMENT "Running Graph Partitioning teaching pipeline (Attention/FFN cut)")
 
 # ─── P5（6_stablehlo_passes）：真实 MLIR StableHLO Pass 插件 ──────────────
 

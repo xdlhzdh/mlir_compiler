@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-demo:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libprotobuf-dev protobuf-compiler \
+            python3 python3-pip python3-onnxruntime
+          python3 -m pip install --user numpy onnx
+
+      - name: Configure
+        run: cmake -B build -G Ninja
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Generate ONNX fixtures
+        run: |
+          cmake --build build --target gen_lowering_models gen_quant_models
+
+      - name: Run P4 lowering + golden + demos
+        run: |
+          cmake --build build --target \
+            run_lowering run_golden run_quant_qdq \
+            run_shlo_opt run_memplan run_graph_partition_demo

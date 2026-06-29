@@ -101,6 +101,7 @@ cmake --build . -j$(nproc)
 | `13_gpu_codegen/` | **P10** | GPU Codegen 7-Step：并行检测→Thread Mapping→GPU Dialect→Shared Mem→NVVM→PTX→Occupancy | **无** | `run_gpu` |
 | `14_quantization/` | **P11** | 量化 7-Step：校准统计→Scale 计算→量化融合→**真实 Q/DQ 图改写**→混合精度分析→Speedup 估算 | **无** | `run_quant` |
 | `15_memory_planning/` | **P12** | 内存规划 8-Step：Liveness→干涉图→Offset 分配→Buffer 复用→In-place 优化→峰值分析→**KVCache decode 场景** | **无** | `run_memplan` |
+| `16_graph_partition/` | **P13** | Graph Partitioning 教学：单层 Transformer Attention/FFN 切分、边界张量与通信量估算 | **无** | `run_graph_partition_demo` |
 
 > `conv_bn_optimized` 跨两个目录：`4_` 的 Python 脚本生成 MLIR，`6_` 的 C++ Pass 插件做 Conv+BN Fusion。
 
@@ -170,7 +171,7 @@ make run DOMAIN=mlir PASS=memplan         # P12
 |-------------|-----------------|-----|------|
 | `make run_graph` | `DOMAIN=mlir PASS=graph` | P1–P3 | 生成 ONNX 测试模型 → 解析 → IR Lowering → 图优化（需 Protobuf + numpy + onnx） |
 | `make run_lowering` | `DOMAIN=mlir PASS=lowering` | P4 | ONNX→StableHLO tier 1(基础) + tier 2(broadcast/dynamic) + tier 3(framework + Softmax/Attention/RMSNorm/LayerNorm/RoPE fixture) |
-| `make run_golden` | — | P4 | ONNX Runtime vs NumPy 数值对齐（6 项 tier-3 fixture） |
+| `make run_golden` | — | P4 | ONNX Runtime vs NumPy 数值对齐（14 项 tier-3 + P11 Q/DQ） |
 | `make conv_bn_optimized` | `DOMAIN=mlir PASS=conv_bn_fusion` | P5 | `4_` Python 导出 MLIR + `6_` mlir-opt Conv+BN Fusion（需 torch + torch-mlir） |
 | `make run_shlo_opt` | `DOMAIN=mlir PASS=shlo_opt` | P5 | StableHLO 图: 24 ops → Canon/Shape/CSE/DCE/Fusion/Layout/Legal → 7 ops |
 | `make run_linalg` | `DOMAIN=mlir PASS=linalg` | P6 | GEMM+Bias+ReLU: 11 ops → 依赖分析/代价模型/Tile-and-Fuse → 5 ops |
@@ -221,7 +222,7 @@ Pipeline: `gen_test_models.py → run_onnx_parse → run_onnx_to_ir → run_grap
 | **tier 2** | `run_lowering_l2` | broadcast → `broadcast_in_dim`；dynamic shape；完整 Conv 属性映射；错误处理 |
 | **tier 3** | `run_lowering_l3` | `ConversionPattern` + `matchAndRewrite`；`ConversionTarget`；`applyFullConversion`；覆盖 Softmax、Scaled Dot-Product Attention、RMSNorm、RoPE 等 Transformer 子图；支持 `--mlir-only` 导出纯 StableHLO MLIR 文本 |
 
-`gen_lowering_models.py` 生成的 tier 3 fixture 包括：`lowering_softmax.onnx`、`lowering_attention.onnx`（MatMul→scale→Softmax→MatMul）、`lowering_rmsnorm.onnx`（Pow/ReduceMean/Sqrt/Div/Mul 分解）、`lowering_rope.onnx`（Slice/Concat + rotate_half 分解）。`run_lowering` 对上述模型逐一结构回归；`run_golden` 用 ONNX Runtime 对比 NumPy reference 做数值对齐（basic/softmax/attention/rmsnorm/rope）。
+`gen_lowering_models.py` 生成的 tier 3 fixture 包括：…、`lowering_matmul_softmax.onnx`、`lowering_layout_conv.onnx`、`lowering_transformer_block.onnx`、`lowering_qdq_matmul.onnx` 等；P11 `quant_qdq_matmul.onnx` 经 P4 tier 3 导出。`run_golden` 用 ONNX Runtime 对比 NumPy reference 做数值对齐（**14 项**：13 项 lowering + P11 Q/DQ）。
 
 导出 StableHLO MLIR 供 [`mlir_pass`](../mlir_pass/) 消费（跨仓库 e2e）：
 
@@ -424,10 +425,10 @@ Stage 7 为教学级 KVCache 内存规划模拟（非真实推理 runtime cache 
 | ONNX → StableHLO lowering | P4 tier 1/2/3 | 消费导出的 `.mlir` |
 | StableHLO 图优化 | P5 模拟 + `6_` Conv+BN plugin | 15 个真实 pass + `AICompilerPlugin` |
 | Linalg → LLVM → JIT | 概念教学 | `pipe-demo` 完整 pipeline |
-| 数值对齐 golden test | `run_golden`（ONNX Runtime，6 项） | — |
+| 数值对齐 golden test | `run_golden`（ONNX Runtime，14 项） | — |
 | 跨仓库 Transformer e2e | `run_lowering_l3 --mlir-only`（五件套） | `test_transformer_e2e` + 19 LIT |
 
-推荐验证顺序：先 `cmake --build build --target run_lowering run_golden run_quant_qdq`，再在 `mlir_pass` 执行 `ninja -C build test_transformer_e2e test_lit_filecheck test_mlir_opt_plugin`。
+推荐验证顺序：先 `cmake --build build --target gen_lowering_models gen_quant_models run_lowering run_golden run_quant_qdq`，再在 `mlir_pass` 执行 `ninja -C build test_transformer_e2e test_quant_e2e test_dynamic_e2e test_jit_golden test_layout_e2e test_lit_filecheck test_mlir_opt_plugin`。
 
 ---
 

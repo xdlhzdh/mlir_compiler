@@ -178,6 +178,19 @@ public:
   }
 };
 
+class ExpOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Exp"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto operand = ctx.lookup(node.input(0));
+    if (!operand.valid()) return LogicalResult::failure();
+    ctx.value_map[node.output(0)] = ctx.builder.emit_exponential(operand);
+    return LogicalResult::success();
+  }
+};
+
 class SinOpConversion : public ConversionPattern {
 public:
   std::string target_op_type() const override { return "Sin"; }
@@ -200,6 +213,32 @@ public:
     auto operand = ctx.lookup(node.input(0));
     if (!operand.valid()) return LogicalResult::failure();
     ctx.value_map[node.output(0)] = ctx.builder.emit_cosine(operand);
+    return LogicalResult::success();
+  }
+};
+
+class NegOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Neg"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto operand = ctx.lookup(node.input(0));
+    if (!operand.valid()) return LogicalResult::failure();
+    ctx.value_map[node.output(0)] = ctx.builder.emit_negate(operand);
+    return LogicalResult::success();
+  }
+};
+
+class ErfOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "Erf"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto operand = ctx.lookup(node.input(0));
+    if (!operand.valid()) return LogicalResult::failure();
+    ctx.value_map[node.output(0)] = ctx.builder.emit_erf(operand);
     return LogicalResult::success();
   }
 };
@@ -578,6 +617,76 @@ public:
   }
 };
 
+static shlo::TensorType same_shape_f32(const shlo::TensorType &ref) {
+  shlo::TensorType t;
+  t.dims = ref.dims;
+  t.elem = shlo::ElemType::F32;
+  return t;
+}
+
+static shlo::Value to_f32(const shlo::Value &val, Context &ctx) {
+  if (val.type.elem == shlo::ElemType::F32)
+    return val;
+  return ctx.builder.emit_convert(val, same_shape_f32(val.type));
+}
+
+static shlo::Value broadcast_scalar_f32(const shlo::Value &scalar,
+                                        const shlo::TensorType &target,
+                                        Context &ctx) {
+  shlo::TensorType st;
+  st.elem = shlo::ElemType::F32;
+  auto bcast = ctx.builder.emit_broadcast_in_dim(scalar, {}, target);
+  return bcast;
+}
+
+class QuantizeLinearOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "QuantizeLinear"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto x = ctx.lookup(node.input(0));
+    if (!x.valid()) return LogicalResult::failure();
+    // Teaching: keep float SSA for downstream DequantizeLinear lowering.
+    ctx.value_map[node.output(0)] = x;
+    return LogicalResult::success();
+  }
+};
+
+class DequantizeLinearOpConversion : public ConversionPattern {
+public:
+  std::string target_op_type() const override { return "DequantizeLinear"; }
+
+  LogicalResult matchAndRewrite(const onnx::NodeProto &node,
+                                Context &ctx) const override {
+    auto q = ctx.lookup(node.input(0));
+    auto scale = ctx.lookup(node.input(1));
+    auto zp = ctx.lookup(node.input(2));
+    if (!q.valid() || !scale.valid() || !zp.valid())
+      return LogicalResult::failure();
+
+    auto q_f32 = to_f32(q, ctx);
+    auto rt = q_f32.type;
+
+    shlo::TensorType f32_scalar{ {}, shlo::ElemType::F32 };
+    auto zp_f32 = to_f32(zp, ctx);
+    if (zp_f32.type.rank() > 0)
+      zp_f32 = ctx.builder.emit_broadcast_in_dim(zp_f32, {}, f32_scalar);
+    auto scale_f32 = to_f32(scale, ctx);
+    if (scale_f32.type.rank() > 0)
+      scale_f32 =
+          ctx.builder.emit_broadcast_in_dim(scale_f32, {}, f32_scalar);
+
+    auto zp_b = broadcast_scalar_f32(zp_f32, rt, ctx);
+    auto scale_b = broadcast_scalar_f32(scale_f32, rt, ctx);
+
+    auto sub = ctx.builder.emit_subtract(q_f32, zp_b, rt);
+    ctx.value_map[node.output(0)] =
+        ctx.builder.emit_multiply(sub, scale_b, rt);
+    return LogicalResult::success();
+  }
+};
+
 // ====================================================================
 // Pipeline: register patterns → apply → verify
 // ====================================================================
@@ -589,8 +698,11 @@ static void populate_onnx_to_stablehlo_patterns(RewritePatternSet &patterns) {
   patterns.add<DivOpConversion>();
   patterns.add<PowOpConversion>();
   patterns.add<SqrtOpConversion>();
+  patterns.add<ExpOpConversion>();
   patterns.add<SinOpConversion>();
   patterns.add<CosOpConversion>();
+  patterns.add<NegOpConversion>();
+  patterns.add<ErfOpConversion>();
   patterns.add<SliceOpConversion>();
   patterns.add<ConcatOpConversion>();
   patterns.add<ReduceMeanOpConversion>();
@@ -599,11 +711,14 @@ static void populate_onnx_to_stablehlo_patterns(RewritePatternSet &patterns) {
   patterns.add<SoftmaxOpConversion>();
   patterns.add<ReshapeOpConversion>();
   patterns.add<TransposeOpConversion>();
+  patterns.add<QuantizeLinearOpConversion>();
+  patterns.add<DequantizeLinearOpConversion>();
 }
 
 static void setup_conversion_target(ConversionTarget &target) {
-  // All StableHLO ops are legal
+  // StableHLO + CHLO (Erf for GELU) ops are legal outputs
   target.addLegalDialect("stablehlo");
+  target.addLegalDialect("chlo");
   target.addLegalOp("func.return");
 
   // All ONNX ops we know about are illegal (must be converted)
@@ -613,8 +728,11 @@ static void setup_conversion_target(ConversionTarget &target) {
   target.addIllegalOp("Div");
   target.addIllegalOp("Pow");
   target.addIllegalOp("Sqrt");
+  target.addIllegalOp("Exp");
   target.addIllegalOp("Sin");
   target.addIllegalOp("Cos");
+  target.addIllegalOp("Neg");
+  target.addIllegalOp("Erf");
   target.addIllegalOp("Slice");
   target.addIllegalOp("Concat");
   target.addIllegalOp("ReduceMean");
@@ -623,6 +741,8 @@ static void setup_conversion_target(ConversionTarget &target) {
   target.addIllegalOp("Softmax");
   target.addIllegalOp("Reshape");
   target.addIllegalOp("Transpose");
+  target.addIllegalOp("QuantizeLinear");
+  target.addIllegalOp("DequantizeLinear");
 }
 
 // ====================================================================
