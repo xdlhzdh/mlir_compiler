@@ -250,6 +250,17 @@ add_custom_target(run_quant
   DEPENDS run_quantization
   COMMENT "Running Quantization & Mixed-Precision pipeline (Calib→Scale→Fusion→Rewrite→MixedPrec→Summary)")
 
+add_custom_target(run_calib_demo
+  COMMAND ${Python3_EXECUTABLE} ${QUANT_DIR}/run_calib_demo.py
+  WORKING_DIRECTORY ${QUANT_DIR}
+  COMMENT "P11 PTQ calibration demo (numpy min/max -> scale/zp JSON)")
+
+add_custom_target(run_calib_to_quant
+  COMMAND bash ${QUANT_DIR}/run_calib_to_quant.sh
+  WORKING_DIRECTORY ${QUANT_DIR}
+  DEPENDS run_quantization
+  COMMENT "P11 calibration JSON -> run_quantization Stage 2 teaching chain")
+
 # ─── P12（15_memory_planning）：内存规划 ───────────────────────────────────
 
 set(MEMPLAN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/15_memory_planning)

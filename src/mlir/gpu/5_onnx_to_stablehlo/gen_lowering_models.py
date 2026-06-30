@@ -22,6 +22,9 @@ Models:
     lowering_matmul_bias.onnx       — MatMul + constant bias add
     lowering_qdq_matmul.onnx        — dequant chains + MatMul (P11 concept)
     lowering_horizontal_gemm.onnx   — shared-LHS MatMul pair + Concat (horizontal fusion)
+    lowering_decode_step.onnx       — seq=1 tiny attention (KV decode teaching)
+    lowering_dynamic_mn.onnx        — MatMul with two dynamic dims (?xK) @ (Kx?)
+    lowering_matmul_f16.onnx        — single MatMul in FP16
 """
 
 from pathlib import Path
@@ -507,6 +510,59 @@ def make_lowering_layout_conv(out_dir):
     _save(m, "lowering_layout_conv.onnx", out_dir)
 
 
+def make_lowering_decode_step(out_dir):
+    """Q(1,1,4), Kt(1,4,3), V(1,3,4) → scaled dot-product attention → Y(1,1,4).
+    seq=1 decode step: one query token attends over a small KV cache."""
+    Q = helper.make_tensor_value_info("Q", TensorProto.FLOAT, [1, 1, 4])
+    Kt = helper.make_tensor_value_info("Kt", TensorProto.FLOAT, [1, 4, 3])
+    V = helper.make_tensor_value_info("V", TensorProto.FLOAT, [1, 3, 4])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, [1, 1, 4])
+    scale = numpy_helper.from_array(
+        np.array(0.5, dtype=np.float32), "scale")
+
+    qk = helper.make_node("MatMul", ["Q", "Kt"], ["scores"],
+                          name="decode_qk")
+    scale_n = helper.make_node("Mul", ["scores", "scale"],
+                               ["scaled_scores"], name="decode_scale")
+    softmax = helper.make_node("Softmax", ["scaled_scores"], ["probs"],
+                               name="decode_softmax", axis=-1)
+    out = helper.make_node("MatMul", ["probs", "V"], ["Y"],
+                           name="decode_pv")
+
+    graph = helper.make_graph([qk, scale_n, softmax, out], "decode_step",
+                              [Q, Kt, V], [Y], initializer=[scale])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_decode_step.onnx", out_dir)
+
+
+def make_lowering_dynamic_mn(out_dir):
+    """A(?xK) @ B(Kx?) → Y(?x?). Both MatMul operands have symbolic M/N dims."""
+    A = helper.make_tensor_value_info("A", TensorProto.FLOAT, ["M", "K"])
+    B = helper.make_tensor_value_info("B", TensorProto.FLOAT, ["K", "N"])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT, ["M", "N"])
+
+    mm = helper.make_node("MatMul", ["A", "B"], ["Y"], name="mm_0")
+    graph = helper.make_graph([mm], "dynamic_mn", [A, B], [Y])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_dynamic_mn.onnx", out_dir)
+
+
+def make_lowering_matmul_f16(out_dir):
+    """X(2,3) → MatMul(W(3,4)) → Y(2,4) in FP16."""
+    X = helper.make_tensor_value_info("X", TensorProto.FLOAT16, [2, 3])
+    Y = helper.make_tensor_value_info("Y", TensorProto.FLOAT16, [2, 4])
+    W = numpy_helper.from_array(
+        np.eye(3, 4, dtype=np.float16), "W")
+
+    mm = helper.make_node("MatMul", ["X", "W"], ["Y"], name="mm_0")
+    graph = helper.make_graph([mm], "matmul_f16", [X], [Y], initializer=[W])
+    m = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
+    m = onnx.shape_inference.infer_shapes(m)
+    _save(m, "lowering_matmul_f16.onnx", out_dir)
+
+
 def make_lowering_horizontal_gemm(out_dir):
     """X(2,3) → MatMul(W1), MatMul(W2) → Concat(axis=1) → Y(2,4)."""
     X = helper.make_tensor_value_info("X", TensorProto.FLOAT, [2, 3])
@@ -551,6 +607,9 @@ def main():
     make_lowering_layout_conv(out_dir)
     make_lowering_horizontal_gemm(out_dir)
     make_lowering_transformer_block(out_dir)
+    make_lowering_decode_step(out_dir)
+    make_lowering_dynamic_mn(out_dir)
+    make_lowering_matmul_f16(out_dir)
     print("Done.")
 
 

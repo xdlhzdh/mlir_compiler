@@ -176,6 +176,14 @@ b_fused = alpha * b + bias_new
 
 两者通常在 canonicalize pass 前后反复执行，形成 `canonicalize → CSE → DCE` 的标准清理流水线。
 
+### Q3.4: Layout 真折叠（NCHW↔NHWC）在 mlir_pass 中如何实现？
+
+**答：** `layout-fold` 对 P4 风格 conv（`[b,f,0,1]` + 常量 kernel perm `{2,3,1,0}`）改写 `dimension_numbers` 与 result layout，消除冗余 transpose。`layout_bridge_legalize.mlir` 仅演示「shape 不变时消 transpose」；完整 NHWC 语义以 `lowering_layout_conv.onnx` + `test_layout_e2e` 为准。
+
+**本项目对应：** [`LayoutFold.cpp`](../../../mlir_pass/lib/Transforms/LayoutFold.cpp)；[`run_layout_e2e.sh`](../../../mlir_pass/scripts/run_layout_e2e.sh)。
+
+**收窄说明：** 非 cudnn layout kernel；失败 shape 时回退为仅删 transpose。
+
 ---
 
 ## 4. Dialect Lowering 与 StableHLO
@@ -362,6 +370,8 @@ iterator_types = ["parallel", "parallel", "reduction"]
 - **减少内存带宽**：fusion 消除中间 tensor 的内存 round-trip
 - **GPU 适用**：tile 大小映射到 thread block 的共享内存
 - **几乎所有高性能 AI kernel 都基于这个策略**
+
+**本项目对应（教学边界）：** `custom-linalg-tile` 对 `linalg.matmul` 做 2×2 strip-mine 并打 `aicom.linalg_tiled`；`linalg_tile_fuse_smoke.mlir` 演示 matmul+bias 经 Linalg 后再 tile（elementwise 暂为独立 `linalg.generic`，非工业 fuse kernel）。`buildLinalgOptimizationStage` 中 **CSE 在 tile 之前**，避免 fold 掉 tile nest；tile 之后不再跑第二次 `linalg-fuse-elementwise-ops`（会撤销分块）。
 
 ### Q6.3: 如何判断两个 linalg.generic 操作能否融合？
 
@@ -759,6 +769,8 @@ occupancy = blocks_per_sm × threads_per_block / max_threads
 7. 验证精度
 ```
 
+**本项目串联（A6）：** `run_calib_demo.py` 生成 min/max → scale/zp JSON；`run_calib_to_quant.sh` 调用 `run_quantization` Stage 2 打印 scale 对照（教学，非 INT8 kernel）。`mlir_pass` 侧 `test_quant_e2e` 验证 Q/DQ 图标注。
+
 ### Q12.2: Per-tensor 和 Per-channel 量化的区别？为什么权重通常用 Per-channel？
 
 **答：**
@@ -917,6 +929,8 @@ O = P @ V        → [N, d]
 - IO 复杂度从 O(N² d) 降到 O(N² d² / M)（M = SRAM 大小）
 - 这是 **算子融合 + 内存优化** 的完美结合
 
+**本项目对应：** `attention-legalize` 标注 `aicom.scaled_dot_product_attention`；`flash-attention-tile` 在 SDP 子图的 `dot_general` 上追加 `aicom.flash_tile` + tile size 属性（**编译期标注**，非 GPU kernel）。与 Q14.10 producer-consumer 同属「子图边界识别」，不物化 N×N 矩阵。
+
 ### Q14.3: GELU 在编译器里通常如何 lower？与 ReLU 相比难点在哪？
 
 **答：**
@@ -997,21 +1011,89 @@ Y = concat(Y1, Y2, axis=-1)
 
 ### Q14.9: Elementwise 链融合在 mlir_pass 中如何体现？
 
-**答：** 识别 `maximum(add/mul(...), 0)` 或 `clamp(0, add/mul(...), +inf)` 的 ReLU 边界，标注 `aicom.elementwise_chain_fused`（教学标注，不强制 kernel 融合）。
+**答：** 识别 `maximum(add(x,c), 0)` 改写为 `clamp(0, add, +inf)` 并 **erase** `maximum`；或已有 `clamp` 时标注 `aicom.elementwise_chain_fused`（StableHLO 图级折叠，非 fused CUDA kernel）。
 
-**本项目对应：** `elementwise-chain-legalize`；LIT `elementwise_chain_legalize.mlir`。
+**本项目对应：** `elementwise-chain-legalize`；LIT `elementwise_chain_legalize.mlir`（`CHECK-NOT: stablehlo.maximum`）。
 
 ### Q14.10: Producer-Consumer 融合（MatMul → Softmax）如何标注？
 
-**答：** 当 `dot_general` 的 scores 经 stable softmax 分解进入 `exp(x - max)` 时，在 `exponential` 上标注 `aicom.producer_consumer_fused`，表示 producer GEMM 与 consumer softmax 的融合边界。
+**答：** `dot → subtract(max) → exp` 教学子图中，将 `exp(scores-max)` 改写为 `exp(scores)*exp(-max)` 并删除 `subtract`；在 `multiply` 上标注 `aicom.producer_consumer_fused`。
 
-**本项目对应：** `producer-consumer-legalize`；P4 `lowering_matmul_softmax.onnx`；`run_transformer_e2e` matmul_softmax case。
+**本项目对应：** `producer-consumer-legalize`；LIT `CHECK-NOT: stablehlo.subtract`；P4 `lowering_matmul_softmax.onnx`。
 
 ### Q14.11: 动态 Shape 跨仓库 e2e 如何验证？
 
 **答：** P4 tier 2 `lowering_dynamic.onnx`（动态 batch + bias 输入）经 `run_level2 --mlir-only` 导出 StableHLO，在 `mlir_pass` 跑 fusion/linalg 并 grep `tensor<?x` 与 `stablehlo.dot_general`；`run_golden` 对 batch=2/4 两档做 ORT vs NumPy。
 
 **本项目对应：** `scripts/run_dynamic_e2e.sh`；`test_dynamic_e2e`；`run_lowering_golden.check_dynamic`。
+
+### Q14.12: CHLO 与 StableHLO 分层、GELU 如何跑通 Linalg？
+
+**答：** StableHLO 核心无 `erf`；P4 GELU lowering 落到 `chlo.erf`。在 Linalg 前须跑 `chlo-legalize-to-stablehlo`（将 erf 等 CHLO 算子分解为 StableHLO 原语），再 `stablehlo-legalize-to-linalg`。`mlir_pass` 在 `buildStableHloToLinalgStage` 中自动插入该 pass。
+
+**本项目对应：** `lib/Transforms/StableHLOToLinalg.cpp`；`test/lit/gelu_linalg_smoke.mlir`；shell regression「gelu_linalg_smoke → no chlo.erf + linalg」。
+
+### Q14.13: numpy-style Broadcast 图优化如何验证？
+
+**答：** P4 tier 2 将 ONNX Add/Mul 的隐式广播显式化为 `stablehlo.broadcast_in_dim`。`mlir_pass` 的 `broadcast-simplify` 消除恒等广播、折叠嵌套 broadcast 链；`lowering_broadcast.onnx` 有 golden + `run_broadcast_e2e` 跨仓库验证 fusion/linalg。
+
+**本项目对应：** `BroadcastSimplify.cpp`；`test/lit/broadcast_simplify.mlir`；`scripts/run_broadcast_e2e.sh`；`run_lowering_golden.check_broadcast`。
+
+### Q14.14: Shape 收窄与 get_dimension_size 教学路径（A1）？
+
+**答：** 官方 `stablehlo-refine-shapes` 在静态 bias/权重参与时把 `?×3` 收窄为 `2×3`；`shape_get_dimension_size.mlir` 演示 `get_dimension_size` + `tensor.cast` 组合。无自写 shape pass。
+
+**本项目对应：** `StableHLOToLinalg.cpp`；`shape_refine_batch.mlir` / `shape_get_dimension_size.mlir`；shell + LIT。
+
+**收窄说明：** 无自写 shape pass；非任意 rank 符号推断。
+
+### Q14.15: Layout 真 NHWC 折叠（A2）？
+
+**答：** `layout-fold` 对 P4 风格 conv（`[b,f,0,1]` + weight perm `{2,3,1,0}`）改写 `dimension_numbers` 与 result layout；LIT 简单 fixture 仅消 transpose。
+
+**本项目对应：** `LayoutFold.cpp`；`test_layout_e2e`；`lowering_layout_conv.onnx`。
+
+**收窄说明：** LIT fixture 不代表完整 NHWC 权重重排路径。
+
+### Q14.16: torch-mlir Conv+BN 跨仓库 e2e（A4）？
+
+**答：** `run_torch_e2e.sh` 导出或 fixture → fusion，断言无 `batch_norm`；Conv **尚不能** CPU JIT（无 conv→LLVM 路径）。
+
+**本项目对应：** `run_torch_e2e.sh`；`conv_bn_torch.mlir` fixture。
+
+**收窄说明：** 无 Conv JIT 数值闭环；勿写「torch 端到端 JIT」。
+
+### Q14.17: P4 GELU / SwiGLU 全链路 JIT（A5）？
+
+**答：** `gelu_p4_jit.mlir` / `swiglu_p4_jit.mlir`；JIT golden `atol=1e-3`（GELU erf）；`jit_gelu.mlir` 保留 sigmoid 快速路径。
+
+**本项目对应：** `run_jit_golden.py` **6 项**；`gelu_linalg_smoke.mlir`。
+
+**收窄说明：** 仅 nullary fixture；含参图不能直 JIT。
+
+### Q14.18: KV decode + P12 内存规划（B2）？
+
+**答：** P4 `lowering_decode_step.onnx` → `kvcache-legalize`；`run_kvcache_e2e.sh` 断言 `kvcache_boundary` + P12 decode slot。
+
+**本项目对应：** `test_kvcache_e2e`；`kvcache_legalize.mlir`。
+
+### Q14.19: Graph Partition 通信量 golden（B3）？
+
+**答：** `sync_partition_fixture.py` 解析 P13 stdout，硬 golden **262144** comm bytes；`run_partition_smoke.sh` 串联 P13 + `graph_partition_smoke.mlir`。
+
+**本项目对应：** `test_partition_smoke`。
+
+### Q14.20: 多动态维 MatMul（B5）？
+
+**答：** `lowering_dynamic_mn.onnx`（`?×K` @ `K×?`）；`run_dynamic_e2e.sh` 双模型；`decode_loop.mlir` 演示 `scf.while`（fusion stop）。
+
+**本项目对应：** `run_lowering_golden.check_dynamic_mn`；`test_dynamic_e2e`。
+
+### Q14.21: FP16 MatMul lowering golden（B6）？
+
+**答：** `lowering_matmul_f16.onnx` 发射 f16；golden cast 到 f32 比较（`rtol/atol=1e-2`）。无 FP16 LLVM 优化。
+
+**本项目对应：** `run_lowering_golden.check_matmul_f16`；P11 混合精度 Step 5 概念对齐。
 
 ---
 
@@ -1092,6 +1174,122 @@ Y = concat(Y1, Y2, axis=-1)
 
 ---
 
+## 附录 B：第三档概念答法（简历勿夸大）
+
+> 第三档 C1–C10 **仅概念**，无大工程代码。模板对照 §2.1 链接至此。
+
+### C1: 自定义 MLIR Dialect
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 用 TableGen 定义自有 op/attr/type，形成独立 dialect |
+| **工业方案** | `mhlo`/`stablehlo`/`linalg`/`tosa` 等 |
+| **本项目边界** | 无独立 dialect；用 StableHLO + `aicom.*` 标注属性 |
+| **面试一句话** | 「理解 dialect 扩展方式；本项目用 decomposition + 标注降低工程量」 |
+
+### C2: PyTorch Dynamo / FX / AOT
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 捕获 PyTorch 计算图并导出/编译 |
+| **工业方案** | Dynamo→FX→Inductor；`torch.export` |
+| **本项目边界** | 无 Dynamo；`torch-mlir` Conv+BN 导出 demo |
+| **面试一句话** | 「熟悉 PyTorch 编译栈分层；主路径 ONNX→StableHLO」 |
+
+### C3: TorchScript / JAX / TensorFlow
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 多前端统一到 HLO/XLA 类 IR |
+| **工业方案** | JAX→XLA；TF→XLA；TS→ONNX |
+| **本项目边界** | 以 ONNX + StableHLO 为共同 IR |
+| **面试一句话** | 「StableHLO 是跨框架交换层；我练的是 ONNX 解析 + SHLO lowering」 |
+
+### C4: QAT vs PTQ、FP8
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 训练后量化 vs 量化感知训练；NV FP8 训练/推理 |
+| **工业方案** | QAT 插入 fake quant；PTQ 校准 scale |
+| **本项目边界** | PTQ `run_calib_demo` + `run_calib_to_quant`；无 QAT/FP8 kernel |
+| **面试一句话** | 「能讲 PTQ 校准链；QAT/FP8 仅概念」 |
+
+### C5: Tensor Parallel / Pipeline Parallel
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 模型切分到多卡；插入通信 |
+| **工业方案** | NCCL AllReduce/AllGather；Megatron-LM |
+| **本项目边界** | P13 编译期切分 + comm bytes 估算；无 NCCL |
+| **面试一句话** | 「P13 教编译期 partition；runtime 并行另论」 |
+
+### C6: 全模型端到端编译
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 整网单 pass 编译到硬件 |
+| **工业方案** | XLA whole-graph；TensorRT builder |
+| **本项目边界** | 子图 StableHLO demo；禁止假 LLaMA benchmark |
+| **面试一句话** | 「子图 lowering + fusion 闭环；不说全模型性能数字」 |
+
+### C7: 真实 GPU 下发
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | PTX/SASS kernel launch |
+| **工业方案** | cuBLAS/cuDNN；Triton；CUTLASS |
+| **本项目边界** | P10 PTX 文本模拟；`mlir_pass` CPU LLVM JIT |
+| **面试一句话** | 「GPU 映射理解 + PTX 教学；数值验证在 CPU JIT」 |
+
+### C8: Benchmark 与性能声称
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 可复现的性能测试方法论 |
+| **工业方案** | Roofline；Nsight；固定 batch/warmup |
+| **本项目边界** | Q15.1 Roofline 概念；无虚构 speedup |
+| **面试一句话** | 「用算术强度讲瓶颈，不编百分比」 |
+
+### C9: Auto-tuning / TVM
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 搜索 tile/schedule 最优点 |
+| **工业方案** | AutoTVM/Ansor；Halide autoscheduler |
+| **本项目边界** | 手工 `custom-linalg-tile` 2×2 教学 |
+| **面试一句话** | 「理解搜索式调度；本项目固定 tile 教原理」 |
+
+### C10: IREE / XLA 插件生态
+
+| 段 | 内容 |
+|----|------|
+| **是什么** | 以 MLIR/StableHLO 为枢纽的多后端 |
+| **工业方案** | IREE；OpenXLA；PJRT |
+| **本项目边界** | 自建 `pipe-demo` pipeline；概念对齐 |
+| **面试一句话** | 「StableHLO 是生态枢纽；我实现的是教学级 lowering 链」 |
+
+---
+
+## 附录 C：工业级全栈缺口速查
+
+> 与 [模板对照 §2.2](../../../mlir_pass/test/模板对照-编译器项目能力映射.md#22-工业级全栈编译器缺口本项目刻意未做) 同构；面试「诚实边界」用。
+
+| 知识域 | 简历禁止表述 |
+|--------|-------------|
+| Conv/GPU JIT | 「Conv 端到端 JIT / GPU 下发」 |
+| 真 tile-fuse | 「完整 tile-fuse pipeline」 |
+| 校准→INT8 kernel | 「校准 JSON 驱动 INT8 加速」 |
+| FlashAttention kernel | 「实现了 FlashAttention kernel」 |
+| QAT/FP8 | 「QAT/FP8 推理提升 XX%」 |
+| TP/PP runtime | 「多卡 NCCL 分布式」 |
+| Dynamo/Dialect | 「实现 Dynamo / 自定义 Dialect」 |
+| 全模型 benchmark | 「LLaMA 全编译 / 吞吐 XX%」 |
+| Paged KV | 「PagedAttention runtime」 |
+
+第三档概念答法（C1–C10）见 **附录 B**；本项目主线为 ONNX→StableHLO→mlir_pass CPU JIT 子图闭环。
+
+---
+
 ## 附录：面试快速参考
 
 ### 必须掌握的核心概念清单
@@ -1118,3 +1316,6 @@ Y = concat(Y1, Y2, axis=-1)
 - [ ] Memory liveness analysis + buffer reuse
 - [ ] Roofline model（compute-bound vs memory-bound）
 - [ ] FlashAttention 在线 softmax 原理
+- [ ] FlashAttention tile 标注（`aicom.flash_tile`，非 kernel）
+- [ ] 第三档概念 C1–C10（附录 B，简历勿夸大）
+- [ ] 工业级全栈缺口（附录 C / 模板 §2.2，简历勿夸大）

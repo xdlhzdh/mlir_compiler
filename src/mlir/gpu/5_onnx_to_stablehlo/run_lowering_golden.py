@@ -226,6 +226,19 @@ def check_transformer_block(model_dir: Path) -> None:
     print("  PASS lowering_transformer_block")
 
 
+def check_broadcast(model_dir: Path) -> None:
+    path = model_dir / "lowering_broadcast.onnx"
+    model = onnx.load(str(path))
+    inits = _init_map(model)
+    x = np.ones((2, 3, 4), dtype=np.float32)
+    bias = inits["bias"]
+    scale = inits["scale"]
+    expected = (x + bias) * scale
+    out = _run_ort(path, {"X": x})["Y"]
+    _assert_close("lowering_broadcast", out, expected)
+    print("  PASS lowering_broadcast")
+
+
 def check_dynamic(model_dir: Path) -> None:
     path = model_dir / "lowering_dynamic.onnx"
     w = np.eye(3, 4, dtype=np.float32)
@@ -236,6 +249,55 @@ def check_dynamic(model_dir: Path) -> None:
         out = _run_ort(path, {"X": x, "bias": bias})["Y"]
         _assert_close(f"lowering_dynamic(batch={batch})", out, expected)
     print("  PASS lowering_dynamic")
+
+
+def check_decode_step(model_dir: Path) -> None:
+    path = model_dir / "lowering_decode_step.onnx"
+    model = onnx.load(str(path))
+    inits = _init_map(model)
+    q = np.array([[[1.0, 0.0, 0.0, 0.0]]], dtype=np.float32)
+    kt = np.array([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]], dtype=np.float32)
+    v = np.array([[[2.0, 0.0, 0.0, 0.0], [0.0, 3.0, 0.0, 0.0],
+                   [0.0, 0.0, 4.0, 0.0]]], dtype=np.float32)
+    scores = q @ kt
+    scaled = scores * inits["scale"]
+    probs = _softmax(scaled, axis=-1)
+    expected = probs @ v
+    out = _run_ort(path, {"Q": q, "Kt": kt, "V": v})["Y"]
+    _assert_close("lowering_decode_step", out, expected)
+    print("  PASS lowering_decode_step")
+
+
+def check_dynamic_mn(model_dir: Path) -> None:
+    path = model_dir / "lowering_dynamic_mn.onnx"
+    cases = (
+        (2, 3, 4),
+        (3, 4, 2),
+    )
+    for m, k, n in cases:
+        a = np.arange(m * k, dtype=np.float32).reshape(m, k)
+        b = np.arange(k * n, dtype=np.float32).reshape(k, n) * 0.1
+        expected = a @ b
+        out = _run_ort(path, {"A": a, "B": b})["Y"]
+        _assert_close(f"lowering_dynamic_mn(M={m},K={k},N={n})", out, expected)
+    print("  PASS lowering_dynamic_mn")
+
+
+def check_matmul_f16(model_dir: Path) -> None:
+    path = model_dir / "lowering_matmul_f16.onnx"
+    model = onnx.load(str(path))
+    inits = _init_map(model)
+    x = np.arange(6, dtype=np.float16).reshape(2, 3)
+    expected = (x.astype(np.float32) @ inits["W"].astype(np.float32)).astype(np.float16)
+    out = _run_ort(path, {"X": x})["Y"]
+    # FP16 matmul: relax tolerance vs FP32 golden checks
+    if not np.allclose(out.astype(np.float32), expected.astype(np.float32),
+                       rtol=1e-2, atol=1e-2):
+        diff = np.max(np.abs(out.astype(np.float32) - expected.astype(np.float32)))
+        raise AssertionError(
+            f"lowering_matmul_f16: max abs diff {diff:.3e} exceeds rtol=1e-2, atol=1e-2")
+    print("  PASS lowering_matmul_f16")
 
 
 def check_quant_qdq_matmul(quant_dir: Path) -> None:
@@ -280,8 +342,12 @@ CHECKS = [
     check_matmul_bias,
     check_qdq_matmul,
     check_horizontal_gemm,
+    check_broadcast,
     check_transformer_block,
     check_dynamic,
+    check_decode_step,
+    check_dynamic_mn,
+    check_matmul_f16,
 ]
 
 

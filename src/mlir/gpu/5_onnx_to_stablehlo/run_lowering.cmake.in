@@ -35,6 +35,12 @@ run_exe(${RUN_L2} "${MODEL_DIR}/lowering_conv_full.onnx")
 banner("P4 tier 2: Enhanced — lowering_dynamic.onnx (dynamic batch)")
 run_exe(${RUN_L2} "${MODEL_DIR}/lowering_dynamic.onnx")
 
+banner("P4 tier 2: Enhanced — lowering_dynamic_mn.onnx (dynamic M/N MatMul)")
+run_exe(${RUN_L2} "${MODEL_DIR}/lowering_dynamic_mn.onnx")
+
+banner("P4 tier 2: Enhanced — lowering_matmul_f16.onnx (FP16 MatMul)")
+run_exe(${RUN_L2} "${MODEL_DIR}/lowering_matmul_f16.onnx")
+
 # ── P4 tier 3: conversion framework ──
 banner("P4 tier 3: Framework — lowering_basic.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_basic.onnx")
@@ -50,6 +56,9 @@ run_exe(${RUN_L3} "${MODEL_DIR}/lowering_softmax.onnx")
 
 banner("P4 tier 3: Framework — lowering_attention.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_attention.onnx")
+
+banner("P4 tier 3: Framework — lowering_decode_step.onnx (seq=1 KV decode)")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_decode_step.onnx")
 
 banner("P4 tier 3: Framework — lowering_rmsnorm.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_rmsnorm.onnx")
@@ -68,6 +77,12 @@ run_exe(${RUN_L3} "${MODEL_DIR}/lowering_swiglu.onnx")
 
 banner("P4 tier 3: Framework — lowering_matmul_bias.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_matmul_bias.onnx")
+
+banner("P4 tier 3: Framework — lowering_matmul_f16.onnx (FP16 MatMul)")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_matmul_f16.onnx")
+
+banner("P4 tier 3: Framework — lowering_dynamic_mn.onnx (dynamic M/N MatMul)")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_dynamic_mn.onnx")
 
 banner("P4 tier 3: Framework — lowering_layout_conv.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_layout_conv.onnx")
