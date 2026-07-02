@@ -505,7 +505,8 @@ Pass 域测试包含：
 
 | 文件 | 说明 |
 |------|------|
-| [`src/mlir/gpu/AI_COMPILER_INTERVIEW.md`](src/mlir/gpu/AI_COMPILER_INTERVIEW.md) | AI 编译器面试高频问题与答案（30+ 题，覆盖全部 15 个阶段） |
-| [`src/mlir/gpu/RESUME_PROJECT.md`](src/mlir/gpu/RESUME_PROJECT.md) | 简历项目描述（详细版/精简版/英文版） |
+| [`src/mlir/gpu/docs/两仓库学习路径与代码导读.md`](src/mlir/gpu/docs/两仓库学习路径与代码导读.md) | 两仓库 AI 编译器学习主文档（路径导读 + 面试边界） |
+| [`src/mlir/gpu/docs/编译器能力映射.md`](src/mlir/gpu/docs/编译器能力映射.md) | 能力边界与工业级缺口对照 |
+| [`src/mlir/gpu/docs/AI_COMPILER_INTERVIEW.md`](src/mlir/gpu/docs/AI_COMPILER_INTERVIEW.md) | AI 编译器面试高频问题与答案（30+ 题，覆盖全部 15 个阶段） |
 | [`src/mlir/README.md`](src/mlir/README.md) | cpu/ 与 gpu/ 目录关系说明 |
 | [`src/mlir/cpu/README.md`](src/mlir/cpu/README.md) | CPU/RISC-V 流水线环境与运行说明 |

@@ -111,7 +111,7 @@
 | **P11** | `14_quantization/` | 横切 | `run_quant` |
 | **P12** | `15_memory_planning/` | 横切 | `run_memplan` |
 
-**P6–P12** 多为 **C++ 教学模拟**；**P5（`6_stablehlo_passes`）** 为默认真 **`mlir-opt`** 路径。面试细节见 [`gpu/AI_COMPILER_INTERVIEW.md`](gpu/AI_COMPILER_INTERVIEW.md)。
+**P6–P12** 多为 **C++ 教学模拟**；**P5（`6_stablehlo_passes`）** 为默认真 **`mlir-opt`** 路径。面试细节见 [`gpu/docs/AI_COMPILER_INTERVIEW.md`](gpu/docs/AI_COMPILER_INTERVIEW.md)；学习主文档见 [`gpu/docs/两仓库学习路径与代码导读.md`](gpu/docs/两仓库学习路径与代码导读.md)。
 
 ---
 

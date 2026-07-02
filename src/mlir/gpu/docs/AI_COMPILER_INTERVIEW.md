@@ -180,7 +180,7 @@ b_fused = alpha * b + bias_new
 
 **答：** `layout-fold` 对 P4 风格 conv（`[b,f,0,1]` + 常量 kernel perm `{2,3,1,0}`）改写 `dimension_numbers` 与 result layout，消除冗余 transpose。`layout_bridge_legalize.mlir` 仅演示「shape 不变时消 transpose」；完整 NHWC 语义以 `lowering_layout_conv.onnx` + `test_layout_e2e` 为准。
 
-**本项目对应：** [`LayoutFold.cpp`](../../../mlir_pass/lib/Transforms/LayoutFold.cpp)；[`run_layout_e2e.sh`](../../../mlir_pass/scripts/run_layout_e2e.sh)。
+**本项目对应：** [`LayoutFold.cpp`](../../../../../../mlir_pass/lib/Transforms/LayoutFold.cpp)；[`run_layout_e2e.sh`](../../../../../../mlir_pass/scripts/run_layout_e2e.sh)。
 
 **收窄说明：** 非 cudnn layout kernel；失败 shape 时回退为仅删 transpose。
 
@@ -1176,7 +1176,7 @@ Y = concat(Y1, Y2, axis=-1)
 
 ## 附录 B：第三档概念答法（简历勿夸大）
 
-> 第三档 C1–C10 **仅概念**，无大工程代码。模板对照 §2.1 链接至此。
+> 第三档 C1–C10 **仅概念**，无大工程代码。能力映射 §2.1 链接至此。
 
 ### C1: 自定义 MLIR Dialect
 
@@ -1272,7 +1272,7 @@ Y = concat(Y1, Y2, axis=-1)
 
 ## 附录 C：工业级全栈缺口速查
 
-> 与 [模板对照 §2.2](../../../mlir_pass/test/模板对照-编译器项目能力映射.md#22-工业级全栈编译器缺口本项目刻意未做) 同构；面试「诚实边界」用。
+> 与 [能力映射 §2.2](./编译器能力映射.md#22-工业级全栈编译器缺口本项目刻意未做) 同构；面试「诚实边界」用。
 
 | 知识域 | 简历禁止表述 |
 |--------|-------------|
@@ -1318,4 +1318,4 @@ Y = concat(Y1, Y2, axis=-1)
 - [ ] FlashAttention 在线 softmax 原理
 - [ ] FlashAttention tile 标注（`aicom.flash_tile`，非 kernel）
 - [ ] 第三档概念 C1–C10（附录 B，简历勿夸大）
-- [ ] 工业级全栈缺口（附录 C / 模板 §2.2，简历勿夸大）
+- [ ] 工业级全栈缺口（附录 C / 能力映射 §2.2，简历勿夸大）
