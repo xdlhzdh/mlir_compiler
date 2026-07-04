@@ -1,10 +1,10 @@
 # Run executables and/or pass/mlir targets; DOMAIN=ast | pass | mlir.
 #   DOMAIN=ast  -> run only ast (interpreter v1..v4, antlr, nfa_dfa)
 #   DOMAIN=pass -> run only pass targets (opt + plugin); PASS=simple_pass to run one plugin
-#   DOMAIN=mlir -> run MLIR targets (conv_bn_model.py + mlir-opt); PASS=conv_bn_fusion to run one
+#   DOMAIN=mlir -> run MLIR teaching targets; PASS=lowering to run one
 #   DOMAIN=     -> run all (ast + pass when RUN_HAVE_PASS; mlir not included)
-# Invoke: cmake -DDOMAIN=mlir -DPASS=conv_bn_fusion -DBINARY_DIR=/path/to/build -P run.cmake
-# From build: make run DOMAIN=mlir PASS=conv_bn_fusion | make run_mlir
+# Invoke: cmake -DDOMAIN=mlir -DPASS=lowering -DBINARY_DIR=/path/to/build -P run.cmake
+# From build: make run DOMAIN=mlir PASS=lowering | make run_mlir
 
 if(NOT BINARY_DIR)
   message(FATAL_ERROR "BINARY_DIR required")
@@ -42,7 +42,7 @@ function(run_pass_domain)
   endif()
 endfunction()
 
-# PASS=conv_bn_fusion -> run conv_bn_optimized (conv_bn_model.py -o model.mlir, mlir-opt -> optimized.mlir)
+# PASS=lowering|graph|shlo_opt|... -> run that single MLIR teaching target
 function(run_mlir_domain)
   message(STATUS "========== Run MLIR (PASS=${PASS}) ==========")
   execute_process(

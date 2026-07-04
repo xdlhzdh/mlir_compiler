@@ -6,18 +6,18 @@
 #   P1  1_onnx_parse/         L0：ONNX GraphProto 解析
 #   P2  2_onnx_to_ir/         L1：ONNX → mini_ir
 #   P3  3_graph_optimize/     L1：mini_ir 图优化
-#   —   4_torch_to_stablehlo/ 非标准 Px：PyTorch/torch-mlir 导出 StableHLO（辅助 P5）
-#   P4  5_onnx_to_stablehlo/  L1：ONNX → StableHLO lowering 练习（内含 tier 1/2/3 难度）
-#   P5  6_stablehlo_passes/   L1：真实 MLIR StableHLO + Pass 插件（mlir-opt）
-#       7_stablehlo_opt/       L1：StableHLO 图优化（shlo_graph，6-step Pass 链）
-#   P6  8_linalg_opt/         L2：Linalg on tensor（linalg_ir）
-#   P7  9_bufferize/          L2：OSB / linalg on memref（bufferize_ir）
-#   P8  10_scf_affine/        L3：循环级（scf_affine_ir）
-#       11_vector/             L3：向量化（vector_ir）
-#   P9  12_llvm_lowering/     L4：Vector → LLVM 后端（llvm_lowering_ir）
-#   P10 13_gpu_codegen/       L3/L4：GPU 映射与 PTX（概念）
-#   P11 14_quantization/      横切：量化与混合精度
-#   P12 15_memory_planning/   横切：内存规划
+#   P4  4_onnx_to_stablehlo/  L1：ONNX → StableHLO lowering 练习（内含 tier 1/2/3 难度）
+#   P5  5_stablehlo_opt/      L1：StableHLO 图优化（shlo_graph，6-step Pass 链）
+#       （真实 MLIR StableHLO Pass 插件已迁移至 mlir_pass 仓库，见其 tools/mlir-opt-plugin/）
+#   P6  6_linalg_opt/         L2：Linalg on tensor（linalg_ir）
+#   P7  7_bufferize/          L2：OSB / linalg on memref（bufferize_ir）
+#   P8  8_scf_affine/         L3：循环级（scf_affine_ir）
+#   P9  9_vector/             L3：向量化（vector_ir）
+#   P10 10_llvm_lowering/     L4：Vector → LLVM 后端（llvm_lowering_ir）
+#   P11 11_gpu_codegen/       L3/L4：GPU 映射与 PTX（概念）
+#   P12 12_quantization/      横切：量化与混合精度
+#   P13 13_memory_planning/   横切：内存规划
+#   P14 14_graph_partition/   横切：图划分（教学模拟）
 #
 #   common/                   共享：onnx_proto、mini_ir.h、脚本
 #
@@ -81,7 +81,7 @@ if(Protobuf_FOUND)
 
   # ─── P4：ONNX → StableHLO lowering 练习（tier 1/2/3，仅 Protobuf）──────────
 
-  set(ONNX_TO_STABLEHLO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/5_onnx_to_stablehlo)
+  set(ONNX_TO_STABLEHLO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/4_onnx_to_stablehlo)
 
   # P4 tier 1: 基础 lowering (Add/MatMul/Conv/Reshape/Transpose)
   add_executable(run_lowering_l1 ${ONNX_TO_STABLEHLO_DIR}/run_level1.cpp)
@@ -134,9 +134,9 @@ else()
   message(WARNING "Protobuf not found. P1~P3 targets will not be built.")
 endif()
 
-# ─── P5（7_stablehlo_opt）：StableHLO 图优化，shlo_graph，纯 C++ ───────────
+# ─── P5（5_stablehlo_opt）：StableHLO 图优化，shlo_graph，纯 C++ ───────────
 
-set(SHLO_OPT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/7_stablehlo_opt)
+set(SHLO_OPT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/5_stablehlo_opt)
 add_executable(run_stablehlo_opt ${SHLO_OPT_DIR}/run_stablehlo_opt.cpp)
 target_include_directories(run_stablehlo_opt PRIVATE ${SHLO_OPT_DIR})
 target_compile_features(run_stablehlo_opt PRIVATE cxx_std_17)
@@ -146,9 +146,9 @@ add_custom_target(run_shlo_opt
   DEPENDS run_stablehlo_opt
   COMMENT "Running P5 shlo_graph optimization (6-step pipeline)")
 
-# ─── P6（8_linalg_opt）：Linalg on tensor ───────────────────────────────────
+# ─── P6（6_linalg_opt）：Linalg on tensor ───────────────────────────────────
 
-set(LINALG_OPT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/8_linalg_opt)
+set(LINALG_OPT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/6_linalg_opt)
 add_executable(run_linalg_opt ${LINALG_OPT_DIR}/run_linalg_opt.cpp)
 target_include_directories(run_linalg_opt PRIVATE ${LINALG_OPT_DIR})
 target_compile_features(run_linalg_opt PRIVATE cxx_std_17)
@@ -158,9 +158,9 @@ add_custom_target(run_linalg
   DEPENDS run_linalg_opt
   COMMENT "Running Linalg tensor-level optimization pipeline (Cluster→Tile→Fuse→DCE)")
 
-# ─── P7（9_bufferize）：One-Shot Bufferization ───────────────────────────────
+# ─── P7（7_bufferize）：One-Shot Bufferization ───────────────────────────────
 
-set(BUFFERIZE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/9_bufferize)
+set(BUFFERIZE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/7_bufferize)
 add_executable(run_bufferize ${BUFFERIZE_DIR}/run_bufferize.cpp)
 target_include_directories(run_bufferize PRIVATE ${BUFFERIZE_DIR})
 target_compile_features(run_bufferize PRIVATE cxx_std_17)
@@ -170,9 +170,9 @@ add_custom_target(run_buf
   DEPENDS run_bufferize
   COMMENT "Running One-Shot Bufferization pipeline (Alias→InPlace→Rewrite→Copy→Dealloc)")
 
-# ─── P8（10_scf_affine）：SCF/Affine 循环优化 ─────────────────────────────
+# ─── P8（8_scf_affine）：SCF/Affine 循环优化 ─────────────────────────────
 
-set(SCF_AFFINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/10_scf_affine)
+set(SCF_AFFINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/8_scf_affine)
 add_executable(run_scf_affine ${SCF_AFFINE_DIR}/run_scf_affine.cpp)
 target_include_directories(run_scf_affine PRIVATE ${SCF_AFFINE_DIR})
 target_compile_features(run_scf_affine PRIVATE cxx_std_17)
@@ -182,9 +182,9 @@ add_custom_target(run_scf
   DEPENDS run_scf_affine
   COMMENT "Running SCF/Affine loop-level optimization pipeline (Tile→Interchange→Fuse→Parallel→Vec)")
 
-# ─── P8（11_vector）：Vector 向量化 ─────────────────────────────────────────
+# ─── P9（9_vector）：Vector 向量化 ─────────────────────────────────────────
 
-set(VECTOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/11_vector)
+set(VECTOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/9_vector)
 add_executable(run_vector_pipeline ${VECTOR_DIR}/run_vector.cpp)
 target_include_directories(run_vector_pipeline PRIVATE ${VECTOR_DIR})
 target_compile_features(run_vector_pipeline PRIVATE cxx_std_17)
@@ -194,9 +194,9 @@ add_custom_target(run_vec
   DEPENDS run_vector_pipeline
   COMMENT "Running Vector dialect pipeline (Precond→Core→Shaping→Opt→LLVM)")
 
-# ─── P9（12_llvm_lowering）：Vector → LLVM 后端 ─────────────────────────────
+# ─── P10（10_llvm_lowering）：Vector → LLVM 后端 ─────────────────────────────
 
-set(LLVM_LOWER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/12_llvm_lowering)
+set(LLVM_LOWER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/10_llvm_lowering)
 add_executable(run_llvm_lowering ${LLVM_LOWER_DIR}/run_llvm_lowering.cpp)
 target_include_directories(run_llvm_lowering PRIVATE ${LLVM_LOWER_DIR})
 target_compile_features(run_llvm_lowering PRIVATE cxx_std_17)
@@ -206,9 +206,9 @@ add_custom_target(run_llvm_lower
   DEPENDS run_llvm_lowering
   COMMENT "Running Vector→LLVM lowering backend pipeline (VecLower→LLVMIR→ISel→RegAlloc→Sched→Emit)")
 
-# ─── P10（13_gpu_codegen）：GPU 代码生成（概念）──────────────────────────────
+# ─── P11（11_gpu_codegen）：GPU 代码生成（概念）──────────────────────────────
 
-set(GPU_CODEGEN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/13_gpu_codegen)
+set(GPU_CODEGEN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/11_gpu_codegen)
 add_executable(run_gpu_codegen ${GPU_CODEGEN_DIR}/run_gpu_codegen.cpp)
 target_include_directories(run_gpu_codegen PRIVATE ${GPU_CODEGEN_DIR})
 target_compile_features(run_gpu_codegen PRIVATE cxx_std_17)
@@ -218,9 +218,9 @@ add_custom_target(run_gpu
   DEPENDS run_gpu_codegen
   COMMENT "Running GPU code generation pipeline (ParallelDetect→ThreadMap→GPUDialect→SharedMem→NVVM→PTX→Occupancy)")
 
-# ─── P11（14_quantization）：量化与混合精度 ─────────────────────────────────
+# ─── P12（12_quantization）：量化与混合精度 ─────────────────────────────────
 
-set(QUANT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/14_quantization)
+set(QUANT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/12_quantization)
 add_executable(run_quantization ${QUANT_DIR}/run_quantization.cpp)
 target_include_directories(run_quantization PRIVATE ${QUANT_DIR})
 target_compile_features(run_quantization PRIVATE cxx_std_17)
@@ -236,13 +236,13 @@ if(Protobuf_FOUND)
     COMMAND ${CMAKE_COMMAND} -E make_directory ${QUANT_MODEL_DIR}
     COMMAND ${Python3_EXECUTABLE} ${QUANT_DIR}/gen_quant_models.py ${QUANT_MODEL_DIR}
     WORKING_DIRECTORY ${QUANT_DIR}
-    COMMENT "Generating P11 ONNX QDQ test models")
+    COMMENT "Generating P12 ONNX QDQ test models")
 
   add_custom_target(run_quant_qdq
     COMMAND $<TARGET_FILE:run_quantization>
             --onnx ${QUANT_MODEL_DIR}/quant_qdq_matmul.onnx
     DEPENDS run_quantization gen_quant_models
-    COMMENT "Running P11 ONNX QDQ import + qlinear rewrite")
+    COMMENT "Running P12 ONNX QDQ import + qlinear rewrite")
 endif()
 
 add_custom_target(run_quant
@@ -253,17 +253,17 @@ add_custom_target(run_quant
 add_custom_target(run_calib_demo
   COMMAND ${Python3_EXECUTABLE} ${QUANT_DIR}/run_calib_demo.py
   WORKING_DIRECTORY ${QUANT_DIR}
-  COMMENT "P11 PTQ calibration demo (numpy min/max -> scale/zp JSON)")
+  COMMENT "P12 PTQ calibration demo (numpy min/max -> scale/zp JSON)")
 
 add_custom_target(run_calib_to_quant
   COMMAND bash ${QUANT_DIR}/run_calib_to_quant.sh
   WORKING_DIRECTORY ${QUANT_DIR}
   DEPENDS run_quantization
-  COMMENT "P11 calibration JSON -> run_quantization Stage 2 teaching chain")
+  COMMENT "P12 calibration JSON -> run_quantization Stage 2 teaching chain")
 
-# ─── P12（15_memory_planning）：内存规划 ───────────────────────────────────
+# ─── P13（13_memory_planning）：内存规划 ───────────────────────────────────
 
-set(MEMPLAN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/15_memory_planning)
+set(MEMPLAN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/13_memory_planning)
 add_executable(run_memory_planning ${MEMPLAN_DIR}/run_memory_planning.cpp)
 target_include_directories(run_memory_planning PRIVATE ${MEMPLAN_DIR})
 target_compile_features(run_memory_planning PRIVATE cxx_std_17)
@@ -273,9 +273,9 @@ add_custom_target(run_memplan
   DEPENDS run_memory_planning
   COMMENT "Running Memory Planning pipeline (Liveness→Interference→OffsetPlan→Reuse→InPlace→Summary)")
 
-# ─── P13（16_graph_partition）：图划分（教学模拟）────────────────────────────
+# ─── P14（14_graph_partition）：图划分（教学模拟）────────────────────────────
 
-set(GPART_DIR ${CMAKE_CURRENT_SOURCE_DIR}/16_graph_partition)
+set(GPART_DIR ${CMAKE_CURRENT_SOURCE_DIR}/14_graph_partition)
 add_executable(run_graph_partition ${GPART_DIR}/run_graph_partition.cpp)
 target_include_directories(run_graph_partition PRIVATE ${GPART_DIR})
 target_compile_features(run_graph_partition PRIVATE cxx_std_17)
@@ -285,166 +285,3 @@ add_custom_target(run_graph_partition_demo
   DEPENDS run_graph_partition
   COMMENT "Running Graph Partitioning teaching pipeline (Attention/FFN cut)")
 
-# ─── P5（6_stablehlo_passes）：真实 MLIR StableHLO Pass 插件 ──────────────
-
-find_package(MLIR QUIET CONFIG)
-if(MLIR_FOUND)
-  find_package(LLVM CONFIG REQUIRED)
-
-  # StableHLO include 发现
-  set(STABLEHLO_INCLUDE_DIR "" CACHE PATH "Include directory containing stablehlo/")
-  if(TARGET MLIRStablehlo)
-    get_target_property(_stablehlo_incs MLIRStablehlo INTERFACE_INCLUDE_DIRECTORIES)
-    if(_stablehlo_incs)
-      list(GET _stablehlo_incs 0 STABLEHLO_INCLUDE_DIR)
-    endif()
-  endif()
-  if(NOT STABLEHLO_INCLUDE_DIR AND EXISTS "/usr/local/include/stablehlo/dialect/StablehloOps.h")
-    set(STABLEHLO_INCLUDE_DIR "/usr/local/include")
-  endif()
-  if(NOT STABLEHLO_INCLUDE_DIR AND EXISTS "/opt/torch-mlir/externals/stablehlo/stablehlo/dialect/StablehloOps.h")
-    set(STABLEHLO_INCLUDE_DIR "/opt/torch-mlir/externals/stablehlo")
-  endif()
-  if(NOT STABLEHLO_INCLUDE_DIR AND MLIR_DIR)
-    get_filename_component(_mlir_prefix "${MLIR_DIR}" PATH)
-    get_filename_component(_mlir_prefix "${_mlir_prefix}" PATH)
-    get_filename_component(_mlir_prefix "${_mlir_prefix}" PATH)
-    if(EXISTS "${_mlir_prefix}/include/stablehlo")
-      set(STABLEHLO_INCLUDE_DIR "${_mlir_prefix}/include")
-    endif()
-    if(NOT STABLEHLO_INCLUDE_DIR AND EXISTS "${_mlir_prefix}/tools/mlir/include/stablehlo")
-      set(STABLEHLO_INCLUDE_DIR "${_mlir_prefix}/tools/mlir/include")
-    endif()
-  endif()
-  if(NOT STABLEHLO_INCLUDE_DIR AND EXISTS "/usr/include/stablehlo/dialect/StablehloOps.h")
-    set(STABLEHLO_INCLUDE_DIR "/usr/include")
-  endif()
-  if(STABLEHLO_INCLUDE_DIR)
-    message(STATUS "StableHLO include: ${STABLEHLO_INCLUDE_DIR}")
-  else()
-    message(WARNING "StableHLO include not found. Set -DSTABLEHLO_INCLUDE_DIR=...")
-  endif()
-
-  # StableHLO generated include
-  set(STABLEHLO_GENERATED_INCLUDE_DIR "" CACHE PATH "StableHLO build dir for .inc files")
-  set(_stablehlo_gen_inc "")
-  if(STABLEHLO_GENERATED_INCLUDE_DIR AND EXISTS "${STABLEHLO_GENERATED_INCLUDE_DIR}/stablehlo/dialect/BaseAttrInterfaces.h.inc")
-    set(_stablehlo_gen_inc "${STABLEHLO_GENERATED_INCLUDE_DIR}")
-  elseif(STABLEHLO_INCLUDE_DIR MATCHES "externals/stablehlo$")
-    if(EXISTS "${STABLEHLO_INCLUDE_DIR}/build/stablehlo/dialect/BaseAttrInterfaces.h.inc")
-      set(_stablehlo_gen_inc "${STABLEHLO_INCLUDE_DIR}/build")
-    elseif(EXISTS "${STABLEHLO_INCLUDE_DIR}/build/include/stablehlo/dialect/BaseAttrInterfaces.h.inc")
-      set(_stablehlo_gen_inc "${STABLEHLO_INCLUDE_DIR}/build/include")
-    endif()
-  elseif(EXISTS "/opt/torch-mlir/externals/stablehlo/build/stablehlo/dialect/BaseAttrInterfaces.h.inc")
-    set(_stablehlo_gen_inc "/opt/torch-mlir/externals/stablehlo/build")
-  elseif(EXISTS "/opt/torch-mlir/build/stablehlo/stablehlo/dialect/BaseAttrInterfaces.h.inc")
-    set(_stablehlo_gen_inc "/opt/torch-mlir/build/stablehlo")
-  elseif(EXISTS "/usr/local/include/stablehlo/dialect/BaseAttrInterfaces.h.inc")
-    set(_stablehlo_gen_inc "/usr/local/include")
-  endif()
-  if(_stablehlo_gen_inc)
-    message(STATUS "StableHLO generated include: ${_stablehlo_gen_inc}")
-  endif()
-
-  # StableHLO 链接库
-  set(STABLEHLO_LIB_DIR "" CACHE PATH "Directory containing StableHLO libs")
-  set(_stablehlo_libs "")
-  if(TARGET MLIRStablehlo)
-    set(_stablehlo_libs MLIRStablehlo)
-  else()
-    if(STABLEHLO_LIB_DIR)
-      set(_search_dirs "${STABLEHLO_LIB_DIR}")
-    else()
-      set(_search_dirs "")
-      if(DEFINED ENV{TORCH_MLIR_HOME} AND EXISTS "$ENV{TORCH_MLIR_HOME}/build/lib")
-        list(APPEND _search_dirs "$ENV{TORCH_MLIR_HOME}/build/lib")
-      endif()
-      if(DEFINED ENV{TORCH_MLIR_HOME} AND EXISTS "$ENV{TORCH_MLIR_HOME}/externals/stablehlo/build/lib")
-        list(APPEND _search_dirs "$ENV{TORCH_MLIR_HOME}/externals/stablehlo/build/lib")
-      endif()
-      if(EXISTS "/opt/torch-mlir/build/lib")
-        list(APPEND _search_dirs "/opt/torch-mlir/build/lib")
-      endif()
-      if(EXISTS "/opt/torch-mlir/externals/stablehlo/build/lib")
-        list(APPEND _search_dirs "/opt/torch-mlir/externals/stablehlo/build/lib")
-      endif()
-      if(EXISTS "/usr/local/lib")
-        list(APPEND _search_dirs "/usr/local/lib")
-      endif()
-      if(EXISTS "/usr/lib")
-        list(APPEND _search_dirs "/usr/lib")
-      endif()
-    endif()
-    set(_shlo_lib_names StablehloOps StablehloBase StablehloAssemblyFormat StablehloTypeInference StablehloSerialization)
-    foreach(_name IN LISTS _shlo_lib_names)
-      find_library(_shlo_found_${_name} ${_name} PATHS ${_search_dirs} NO_DEFAULT_PATH)
-      if(_shlo_found_${_name})
-        list(APPEND _stablehlo_libs "${_shlo_found_${_name}}")
-      endif()
-    endforeach()
-    if(NOT _stablehlo_libs)
-      message(FATAL_ERROR "StableHLO: no libs found. Set STABLEHLO_LIB_DIR.")
-    endif()
-  endif()
-
-  set(PASSES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/6_stablehlo_passes)
-
-  add_definitions(${MLIR_DEFINITIONS})
-
-  add_library(DialectPass SHARED
-    ${PASSES_DIR}/ConvBNFusionPattern.cpp
-    ${PASSES_DIR}/Passes.cpp
-  )
-  target_include_directories(DialectPass PRIVATE
-    ${MLIR_INCLUDE_DIRS}
-    ${LLVM_INCLUDE_DIRS}
-    ${STABLEHLO_INCLUDE_DIR}
-    ${_stablehlo_gen_inc}
-    ${PASSES_DIR}
-  )
-  target_compile_options(DialectPass PRIVATE -fno-rtti)
-  target_link_libraries(DialectPass
-    -Wl,--whole-archive
-    MLIRIR
-    MLIRRewrite
-    -Wl,--no-whole-archive
-    MLIRPass
-    ${_stablehlo_libs}
-    MLIRArithDialect
-    MLIRFuncDialect
-    MLIRTransforms
-  )
-
-  # mlir-opt 可执行文件
-  get_filename_component(_mlir_bin "${MLIR_DIR}/../../bin" ABSOLUTE)
-  if(EXISTS "${_mlir_bin}/mlir-opt")
-    set(MLIR_OPT_EXE "${_mlir_bin}/mlir-opt")
-  else()
-    set(MLIR_OPT_EXE "mlir-opt")
-  endif()
-  message(STATUS "Using mlir-opt: ${MLIR_OPT_EXE}")
-
-  # conv_bn_optimized: Python 导出 → mlir-opt pass
-  set(CONV_BN_PYTHON "${Python3_EXECUTABLE}")
-  if(NOT CONV_BN_PYTHON)
-    set(CONV_BN_PYTHON "python3")
-  endif()
-  set(CONV_BN_PY "${CMAKE_CURRENT_SOURCE_DIR}/4_torch_to_stablehlo/conv_bn_model.py")
-  set(CONV_BN_MODEL_MLIR "${CMAKE_CURRENT_BINARY_DIR}/conv_bn_model.mlir")
-  set(CONV_BN_OPTIMIZED_MLIR "${CMAKE_CURRENT_BINARY_DIR}/conv_bn_fusion.mlir")
-  configure_file(
-    "${PASSES_DIR}/run_mlir_opt.sh.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/run_mlir_opt.sh"
-    @ONLY
-  )
-  add_custom_target(conv_bn_optimized
-    COMMAND ${CMAKE_COMMAND} -E echo "Generating conv_bn_model.mlir via conv_bn_model.py ..."
-    COMMAND ${_conv_bn_env_cmd} ${CONV_BN_PYTHON} "${CONV_BN_PY}" -o "${CONV_BN_MODEL_MLIR}"
-    COMMAND ${CMAKE_COMMAND} -E echo "Running mlir-opt --conv-bn-fusion -> conv_bn_fusion.mlir"
-    COMMAND sh "${CMAKE_CURRENT_BINARY_DIR}/run_mlir_opt.sh" "${MLIR_OPT_EXE}" "${CONV_BN_MODEL_MLIR}" "${CONV_BN_OPTIMIZED_MLIR}"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS DialectPass
-    COMMENT "conv_bn_model.py -> conv_bn_model.mlir -> mlir-opt conv-bn-fusion -> conv_bn_fusion.mlir"
-  )
-endif()

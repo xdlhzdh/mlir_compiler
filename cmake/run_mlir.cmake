@@ -1,15 +1,13 @@
-# Run MLIR-related targets (conv_bn_model.py + mlir-opt); PASS filters which to
-# run. PASS=conv_bn_fusion -> run conv_bn_optimized (generate model.mlir, then
-# conv-bn-fusion -> optimized.mlir) PASS=               -> run all MLIR targets
-# (currently only conv_bn_optimized) Invoke: cmake -DPASS=conv_bn_fusion
-# -DBINARY_DIR=/path/to/build -P run_mlir.cmake From build: make run DOMAIN=mlir
-# PASS=conv_bn_fusion
+# Run MLIR-related teaching targets; PASS filters which to run.
+# PASS=graph|lowering|shlo_opt|... -> run that single target.
+# PASS=                            -> run all MLIR targets.
+# Invoke: cmake -DPASS=lowering -DBINARY_DIR=/path/to/build -P run_mlir.cmake
+# From build: make run DOMAIN=mlir PASS=lowering
 
 if(NOT BINARY_DIR)
   message(FATAL_ERROR "BINARY_DIR required")
 endif()
 
-set(CONV_BN_FUSION_TARGET conv_bn_optimized)
 set(GRAPH_TARGET run_graph)
 set(LOWERING_TARGET run_lowering)
 set(SHLO_OPT_TARGET run_shlo_opt)
@@ -21,7 +19,7 @@ set(LLVM_LOWER_TARGET run_llvm_lower)
 set(GPU_CODEGEN_TARGET run_gpu)
 set(QUANTIZATION_TARGET run_quant)
 set(MEMPLAN_TARGET run_memplan)
-set(ALL_MLIR_TARGETS ${CONV_BN_FUSION_TARGET} ${GRAPH_TARGET} ${LOWERING_TARGET} ${SHLO_OPT_TARGET} ${LINALG_OPT_TARGET} ${BUFFERIZE_TARGET} ${SCF_AFFINE_TARGET} ${VECTOR_TARGET} ${LLVM_LOWER_TARGET} ${GPU_CODEGEN_TARGET} ${QUANTIZATION_TARGET} ${MEMPLAN_TARGET})
+set(ALL_MLIR_TARGETS ${GRAPH_TARGET} ${LOWERING_TARGET} ${SHLO_OPT_TARGET} ${LINALG_OPT_TARGET} ${BUFFERIZE_TARGET} ${SCF_AFFINE_TARGET} ${VECTOR_TARGET} ${LLVM_LOWER_TARGET} ${GPU_CODEGEN_TARGET} ${QUANTIZATION_TARGET} ${MEMPLAN_TARGET})
 
 function(build_mlir_target name)
   message(STATUS "========== MLIR: ${name} ==========")
@@ -47,9 +45,7 @@ function(try_build_mlir_target name out_failed_list)
   endif()
 endfunction()
 
-if(PASS STREQUAL "conv_bn_fusion")
-  build_mlir_target(${CONV_BN_FUSION_TARGET})
-elseif(PASS STREQUAL "graph")
+if(PASS STREQUAL "graph")
   build_mlir_target(${GRAPH_TARGET})
 elseif(PASS STREQUAL "lowering")
   build_mlir_target(${LOWERING_TARGET})

@@ -71,9 +71,9 @@ PyTorch
 
 - **L1 — Frontend Graph Layer**：ONNX Dialect / `mini_ir`、**Torch Dialect** 等，负责承接框架图、拓扑与元数据。
 - **L2 — Tensor Operator / High-Level Math Layer**：**StableHLO**，更接近硬件无关的纯数学张量算子 IR，适合形状推导、布局传播、常量折叠、图级融合等。
-- **L3 — Structured Op & Memory Layer**：**`linalg` on `tensor` → OSB → `linalg` on `memref`**。**降到 `linalg` on `tensor` 才进入 L3**（**P6** / `8_linalg_opt`）。勿与 **P4 内部的 tier 1/2/3**（难度分级）混淆。
+- **L3 — Structured Op & Memory Layer**：**`linalg` on `tensor` → OSB → `linalg` on `memref`**。**降到 `linalg` on `tensor` 才进入 L3**（**P6** / `6_linalg_opt`）。勿与 **P4 内部的 tier 1/2/3**（难度分级）混淆。
 - **Torch Dialect**：**torch-mlir** 表示 **PyTorch 侧算子** 的 MLIR 方言，属于 L1 前端图语义，不是 StableHLO（不同 op 集合与规范：OpenXLA vs PyTorch 映射）。
-- **本示例 `matmul.py`**：`output_type="linalg-on-tensors"` 会沿 torch-mlir **尽快落到 L3**，中间可能短暂经过 Torch 相关 IR，**通常不生成** 供对照阅读的 **StableHLO 文本**。要看 **StableHLO 导出 + L2 高级张量算子 Pass**，用 `src/mlir/gpu/`（如 `conv_bn_model.py`）。
+- **本示例 `matmul.py`**：`output_type="linalg-on-tensors"` 会沿 torch-mlir **尽快落到 L3**，中间可能短暂经过 Torch 相关 IR，**通常不生成** 供对照阅读的 **StableHLO 文本**。要看 **StableHLO 导出 + L2 高级张量算子 Pass**，用 `mlir_pass` 仓库的 `scripts/torch_export/conv_bn_model.py`（torch-mlir 导出 StableHLO）配合其 `conv-bn-fusion` Pass。
 - **L2 → L3 汇合**：**StableHLO → `linalg` on `tensor`**（也可能先经 **TOSA** 等，视编译器而定），与本文 **Torch → Linalg** **在 L3 汇合**；之后 **OSB（仍 L3）→ `linalg-to-loops`（进 L4）→ LLVM Dialect** 等与 **[../README.md](../README.md)** 中 **「L3→L4 Pass 速查」** 一致。接 GPU 时 **L4 后半段** 仍会再分叉，命令流与 `cpu/` 不完全相同。
 
 **本仓库步骤 ↔ 分层（速查）**

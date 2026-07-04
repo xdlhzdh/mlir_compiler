@@ -1,6 +1,6 @@
 # AI 编译器面试高频问题与答案
 
-> 基于本项目 **P1–P12** 编译器 pipeline（见 `gpu/CMakeLists.txt` 顶部 Px 表；`4_torch_to_stablehlo` 为辅助脚本非标准 Px），覆盖从模型解析到机器码生成的全流程。各目录内子 Pass 记为 **Px Step N**。
+> 基于本项目 **P1–P14** 编译器 pipeline（见 `gpu/CMakeLists.txt` 顶部 Px 表），覆盖从模型解析到机器码生成的全流程。各目录内子 Pass 记为 **Px Step N**。真实 MLIR StableHLO Pass（Conv+BN Fusion）与 torch-mlir 导出脚本见 `mlir_pass` 仓库。
 
 ---
 
@@ -979,7 +979,7 @@ GELU(x) ≈ 0.5 * x * (1 + erf(x / sqrt(2)))
 
 编译器职责：划分 subgraph、在边界插入通信节点、估算通信量与计算量平衡。
 
-**本项目对应：** P13 `16_graph_partition/` 教学模拟（无真实多卡 runtime）。
+**本项目对应：** P14 `14_graph_partition/` 教学模拟（无真实多卡 runtime）。
 
 ### Q14.7: ONNX Q/DQ 量化图在编译器前端如何处理？
 
@@ -987,7 +987,7 @@ GELU(x) ≈ 0.5 * x * (1 + erf(x / sqrt(2)))
 
 `DQ: (q - zp) * scale` 将 int8 恢复为 float；`Q` 反向量化。编译器识别 `DQ → Compute → Q` 子图，对双端 DQ 的 MatMul 可标注 QDQ 边界或改写为 QLinear 算子。
 
-**本项目对应：** P11 `quant_qdq_matmul.onnx`；P4 `lowering_qdq_matmul.onnx`；`mlir_pass` `qdq-legalize` + `test_quant_e2e`。
+**本项目对应：** P12 `quant_qdq_matmul.onnx`；P4 `lowering_qdq_matmul.onnx`；`mlir_pass` `qdq-legalize` + `test_quant_e2e`。
 
 ### Q14.8: Horizontal GEMM 融合是什么？编译器如何做？
 
@@ -1055,11 +1055,11 @@ Y = concat(Y1, Y2, axis=-1)
 
 **收窄说明：** LIT fixture 不代表完整 NHWC 权重重排路径。
 
-### Q14.16: torch-mlir Conv+BN 跨仓库 e2e（A4）？
+### Q14.16: torch-mlir Conv+BN e2e（A4）？
 
-**答：** `run_torch_e2e.sh` 导出或 fixture → fusion，断言无 `batch_norm`；Conv **尚不能** CPU JIT（无 conv→LLVM 路径）。
+**答：** `run_torch_e2e.sh`（`mlir_pass` 内自带 `scripts/torch_export/conv_bn_model.py`）导出或 fixture → fusion，断言无 `batch_norm`；Conv **尚不能** CPU JIT（无 conv→LLVM 路径）。
 
-**本项目对应：** `run_torch_e2e.sh`；`conv_bn_torch.mlir` fixture。
+**本项目对应：** `mlir_pass/scripts/run_torch_e2e.sh`；`conv_bn_torch.mlir` fixture。
 
 **收窄说明：** 无 Conv JIT 数值闭环；勿写「torch 端到端 JIT」。
 
@@ -1071,15 +1071,15 @@ Y = concat(Y1, Y2, axis=-1)
 
 **收窄说明：** 仅 nullary fixture；含参图不能直 JIT。
 
-### Q14.18: KV decode + P12 内存规划（B2）？
+### Q14.18: KV decode + P13 内存规划（B2）？
 
-**答：** P4 `lowering_decode_step.onnx` → `kvcache-legalize`；`run_kvcache_e2e.sh` 断言 `kvcache_boundary` + P12 decode slot。
+**答：** P4 `lowering_decode_step.onnx` → `kvcache-legalize`；`run_kvcache_e2e.sh` 断言 `kvcache_boundary` + P13 decode slot。
 
 **本项目对应：** `test_kvcache_e2e`；`kvcache_legalize.mlir`。
 
 ### Q14.19: Graph Partition 通信量 golden（B3）？
 
-**答：** `sync_partition_fixture.py` 解析 P13 stdout，硬 golden **262144** comm bytes；`run_partition_smoke.sh` 串联 P13 + `graph_partition_smoke.mlir`。
+**答：** `sync_partition_fixture.py` 解析 P14 stdout，硬 golden **262144** comm bytes；`run_partition_smoke.sh` 串联 P14 + `graph_partition_smoke.mlir`。
 
 **本项目对应：** `test_partition_smoke`。
 
@@ -1093,7 +1093,7 @@ Y = concat(Y1, Y2, axis=-1)
 
 **答：** `lowering_matmul_f16.onnx` 发射 f16；golden cast 到 f32 比较（`rtol/atol=1e-2`）。无 FP16 LLVM 优化。
 
-**本项目对应：** `run_lowering_golden.check_matmul_f16`；P11 混合精度 Step 5 概念对齐。
+**本项目对应：** `run_lowering_golden.check_matmul_f16`；P12 混合精度 Step 5 概念对齐。
 
 ---
 
@@ -1220,8 +1220,8 @@ Y = concat(Y1, Y2, axis=-1)
 |----|------|
 | **是什么** | 模型切分到多卡；插入通信 |
 | **工业方案** | NCCL AllReduce/AllGather；Megatron-LM |
-| **本项目边界** | P13 编译期切分 + comm bytes 估算；无 NCCL |
-| **面试一句话** | 「P13 教编译期 partition；runtime 并行另论」 |
+| **本项目边界** | P14 编译期切分 + comm bytes 估算；无 NCCL |
+| **面试一句话** | 「P14 教编译期 partition；runtime 并行另论」 |
 
 ### C6: 全模型端到端编译
 
@@ -1238,7 +1238,7 @@ Y = concat(Y1, Y2, axis=-1)
 |----|------|
 | **是什么** | PTX/SASS kernel launch |
 | **工业方案** | cuBLAS/cuDNN；Triton；CUTLASS |
-| **本项目边界** | P10 PTX 文本模拟；`mlir_pass` CPU LLVM JIT |
+| **本项目边界** | P11 PTX 文本模拟；`mlir_pass` CPU LLVM JIT |
 | **面试一句话** | 「GPU 映射理解 + PTX 教学；数值验证在 CPU JIT」 |
 
 ### C8: Benchmark 与性能声称
