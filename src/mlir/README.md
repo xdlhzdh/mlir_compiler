@@ -25,7 +25,7 @@
 | 生成器 | CMake target | 输出目录（相对 `build/`） | 用途 |
 |--------|--------------|---------------------------|------|
 | `gpu/common/gen_test_models.py` | `gen_test_models` | `src/mlir/gpu/models/`（4 个：`add_matmul` / `conv_bn` / `transpose` / `const_fold`） | **P1–P3** 解析 / mini_ir / 图优化 |
-| `gpu/4_onnx_to_stablehlo/gen_lowering_models.py` | `gen_lowering_models` | `src/mlir/gpu/lowering_models/`（22 个 `lowering_*.onnx`） | **P4** ONNX→StableHLO + `run_golden` |
+| `gpu/4_onnx_to_stablehlo/gen_lowering_models.py` | `gen_lowering_models` | `src/mlir/gpu/lowering_models/`（22 个 `lowering_*.onnx`） | **P4** ONNX→StableHLO + `run_onnx_golden` |
 | `gpu/12_quantization/gen_quant_models.py` | `gen_quant_models` | `src/mlir/gpu/quant_models/`（`quant_qdq_matmul.onnx`） | **P12** 工业 QDQ fixture |
 
 ```bash

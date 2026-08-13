@@ -1023,9 +1023,9 @@ Y = concat(Y1, Y2, axis=-1)
 
 ### Q14.11: 动态 Shape 跨仓库 e2e 如何验证？
 
-**答：** P4 tier 2 `lowering_dynamic.onnx`（动态 batch + bias 输入）经 `run_level2 --mlir-only` 导出 StableHLO，在 `mlir_pass` 跑 fusion/linalg 并 grep `tensor<?x` 与 `stablehlo.dot_general`；`run_golden` 对 batch=2/4 两档做 ORT vs NumPy。
+**答：** P4 tier 2 `lowering_dynamic.onnx`（动态 batch + bias 输入）经 `run_level2 --mlir-only` 导出 StableHLO，在 `mlir_pass` 跑 fusion/linalg 并 grep `tensor<?x` 与 `stablehlo.dot_general`；`run_onnx_golden` 对 batch=2/4 两档做 ORT vs NumPy。
 
-**本项目对应：** `scripts/run_dynamic_e2e.sh`；`test_dynamic_e2e`；`run_lowering_golden.check_dynamic`。
+**本项目对应：** `scripts/run_dynamic_e2e.sh`；`test_dynamic_e2e`；`run_onnx_golden.check_dynamic`。
 
 ### Q14.12: CHLO 与 StableHLO 分层、GELU 如何跑通 Linalg？
 
@@ -1037,7 +1037,7 @@ Y = concat(Y1, Y2, axis=-1)
 
 **答：** P4 tier 2 将 ONNX Add/Mul 的隐式广播显式化为 `stablehlo.broadcast_in_dim`。`mlir_pass` 的 `broadcast-simplify` 消除恒等广播、折叠嵌套 broadcast 链；`lowering_broadcast.onnx` 有 golden + `run_broadcast_e2e` 跨仓库验证 fusion/linalg。
 
-**本项目对应：** `BroadcastSimplify.cpp`；`test/lit/broadcast_simplify.mlir`；`scripts/run_broadcast_e2e.sh`；`run_lowering_golden.check_broadcast`。
+**本项目对应：** `BroadcastSimplify.cpp`；`test/lit/broadcast_simplify.mlir`；`scripts/run_broadcast_e2e.sh`；`run_onnx_golden.check_broadcast`。
 
 ### Q14.14: Shape 收窄与 get_dimension_size 教学路径（A1）？
 
@@ -1087,13 +1087,13 @@ Y = concat(Y1, Y2, axis=-1)
 
 **答：** `lowering_dynamic_mn.onnx`（`?×K` @ `K×?`）；`run_dynamic_e2e.sh` 双模型；`decode_loop.mlir` 演示 `scf.while`（fusion stop）。
 
-**本项目对应：** `run_lowering_golden.check_dynamic_mn`；`test_dynamic_e2e`。
+**本项目对应：** `run_onnx_golden.check_dynamic_mn`；`test_dynamic_e2e`。
 
 ### Q14.21: FP16 MatMul lowering golden（B6）？
 
 **答：** `lowering_matmul_f16.onnx` 发射 f16；golden cast 到 f32 比较（`rtol/atol=1e-2`）。无 FP16 LLVM 优化。
 
-**本项目对应：** `run_lowering_golden.check_matmul_f16`；P12 混合精度 Step 5 概念对齐。
+**本项目对应：** `run_onnx_golden.check_matmul_f16`；P12 混合精度 Step 5 概念对齐。
 
 ---
 

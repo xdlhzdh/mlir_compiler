@@ -33,5 +33,5 @@ jobs:
       - name: Run P4 lowering + golden + demos
         run: |
           cmake --build build --target \
-            run_lowering run_golden run_quant_qdq \
+            run_lowering run_onnx_golden run_quant_qdq \
             run_shlo_opt run_memplan run_graph_partition_demo

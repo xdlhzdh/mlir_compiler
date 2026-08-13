@@ -124,12 +124,12 @@ if(Protobuf_FOUND)
     DEPENDS run_lowering_l1 run_lowering_l2 run_lowering_l3 gen_lowering_models gen_quant_models
     COMMENT "Running full P4 ONNX→StableHLO lowering (tiers 1+2+3)")
 
-  add_custom_target(run_golden
+  add_custom_target(run_onnx_golden
     COMMAND ${Python3_EXECUTABLE}
-      ${ONNX_TO_STABLEHLO_DIR}/run_lowering_golden.py ${LOWERING_MODEL_DIR}
+      ${ONNX_TO_STABLEHLO_DIR}/run_onnx_golden.py ${LOWERING_MODEL_DIR}
       --quant-dir ${QUANT_MODEL_DIR}
     DEPENDS gen_lowering_models gen_quant_models
-    COMMENT "Running P4 golden numerical checks (ONNX Runtime vs NumPy)")
+    COMMENT "Python: check lowering fixture .onnx via ONNX Runtime (no C++)")
 else()
   message(WARNING "Protobuf not found. P1~P3 targets will not be built.")
 endif()

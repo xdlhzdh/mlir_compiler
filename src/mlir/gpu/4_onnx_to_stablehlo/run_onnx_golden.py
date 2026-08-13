@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""P4 golden numerical checks: ONNX Runtime vs NumPy reference for tier-3 fixtures."""
+"""ONNX Runtime vs NumPy reference checks for P4 fixture `.onnx` files.
+
+Does not run lowering or read StableHLO.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from onnx import numpy_helper
 try:
     import onnxruntime as ort
 except ImportError:
-    print("ERROR: onnxruntime is required for run_lowering_golden", file=sys.stderr)
+    print("ERROR: onnxruntime is required for run_onnx_golden", file=sys.stderr)
     sys.exit(1)
 
 RTOL = 1e-5
@@ -367,7 +370,7 @@ def main() -> int:
     args = parser.parse_args()
     model_dir = Path(args.model_dir)
 
-    print("P4 golden numerical checks (ONNX Runtime vs NumPy)")
+    print("ONNX Runtime vs NumPy (run_onnx_golden; does not run lowering)")
     failed = 0
     for check in CHECKS:
         try:

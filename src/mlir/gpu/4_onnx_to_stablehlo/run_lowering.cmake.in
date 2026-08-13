@@ -51,6 +51,9 @@ run_exe(${RUN_L3} "${MODEL_DIR}/lowering_broadcast.onnx")
 banner("P4 tier 3: Framework — lowering_conv_full.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_conv_full.onnx")
 
+banner("P4 tier 3: Framework — lowering_dynamic.onnx")
+run_exe(${RUN_L3} "${MODEL_DIR}/lowering_dynamic.onnx")
+
 banner("P4 tier 3: Framework — lowering_softmax.onnx")
 run_exe(${RUN_L3} "${MODEL_DIR}/lowering_softmax.onnx")
 
