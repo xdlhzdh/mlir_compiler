@@ -180,7 +180,7 @@ b_fused = alpha * b + bias_new
 
 **答：** `layout-fold` 对 P4 风格 conv（`[b,f,0,1]` + 常量 kernel perm `{2,3,1,0}`）改写 `dimension_numbers` 与 result layout，消除冗余 transpose。`layout_bridge_legalize.mlir` 仅演示「shape 不变时消 transpose」；完整 NHWC 语义以 `lowering_layout_conv.onnx` + `test_layout_e2e` 为准。
 
-**本项目对应：** [`LayoutFold.cpp`](../../../../../../mlir_pass/lib/Transforms/LayoutFold.cpp)；[`run_layout_e2e.sh`](../../../../../../mlir_pass/scripts/run_layout_e2e.sh)。
+**本项目对应：** [`LayoutFold.cpp`](../../../../../mlir_pass/lib/Transforms/LayoutFold.cpp)；[`run_layout_e2e.sh`](../../../../../mlir_pass/scripts/run_layout_e2e.sh)。
 
 **收窄说明：** 非 cudnn layout kernel；失败 shape 时回退为仅删 transpose。
 
