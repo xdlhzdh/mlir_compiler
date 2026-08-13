@@ -20,9 +20,33 @@
 
 `ONNX GraphProto` / 原始 TorchScript 属于**模型交换格式或框架导出物**，可作为入口材料；下面的 **L1–L4** 才是本文统一使用的编译器抽象层级。
 
+本仓 **可直接生成原生 `.onnx` 文件**（内含标准 `ModelProto` → `GraphProto`），不是只“读别人导出的模型”：
+
+| 生成器 | CMake target | 输出目录（相对 `build/`） | 用途 |
+|--------|--------------|---------------------------|------|
+| `gpu/common/gen_test_models.py` | `gen_test_models` | `src/mlir/gpu/models/`（4 个：`add_matmul` / `conv_bn` / `transpose` / `const_fold`） | **P1–P3** 解析 / mini_ir / 图优化 |
+| `gpu/4_onnx_to_stablehlo/gen_lowering_models.py` | `gen_lowering_models` | `src/mlir/gpu/lowering_models/`（22 个 `lowering_*.onnx`） | **P4** ONNX→StableHLO + `run_golden` |
+| `gpu/12_quantization/gen_quant_models.py` | `gen_quant_models` | `src/mlir/gpu/quant_models/`（`quant_qdq_matmul.onnx`） | **P12** 工业 QDQ fixture |
+
+```bash
+# 在 mlir_compiler 仓库根目录（无需完整 cmake 也可直接跑 Python）
+mkdir -p build/src/mlir/gpu/{models,lowering_models,quant_models}
+python3 src/mlir/gpu/common/gen_test_models.py \
+  build/src/mlir/gpu/models
+python3 src/mlir/gpu/4_onnx_to_stablehlo/gen_lowering_models.py \
+  build/src/mlir/gpu/lowering_models
+python3 src/mlir/gpu/12_quantization/gen_quant_models.py \
+  build/src/mlir/gpu/quant_models
+
+# 或在已配置的 build/ 里：
+# cmake --build build --target gen_test_models gen_lowering_models gen_quant_models
+```
+
+生成方式是 `onnx.helper.make_graph` / `make_model` + `onnx.save`，写出的就是可被 `onnx.load` / ONNX Runtime / `1_onnx_parse` 直接消费的 **原生 Protobuf ONNX 图文件**。兄弟仓 `mlir_pass` **不生成** teaching fixture；它只消费上述 `.onnx`（跨仓库 e2e），另有可选的 `scripts/torch_export/onnx_export_inspect.py`（需本机 PyTorch）用 `torch.onnx.export` 演示框架导出路径。
+
 | 层级 | 称谓 | 典型 IR / 形态 | 核心职责 | `gpu/` 本仓库 | `cpu/` 本仓库 |
 |------|------|----------------|----------|---------------|---------------|
-| **入口** | 原始 / 交换图（尚未算作编译器分层） | **ONNX `GraphProto`**（Protobuf）、原始 TorchScript 等 | 读取模型结构、权重、框架导出信息 | `1_onnx_parse/`：只 **读模型结构**，不做图优化 | **不涉及**（无 ONNX 解析示例） |
+| **入口** | 原始 / 交换图（尚未算作编译器分层） | **ONNX `GraphProto`**（Protobuf `.onnx` 文件） | 读取/生成模型结构、权重、框架导出信息 | **生成**：上表三个 `gen_*`；**读取**：`1_onnx_parse/` 只解析结构，不做图优化 | **不涉及**（无 ONNX 解析示例） |
 | **L1** | **Frontend Graph Layer**（前端图层） | **ONNX Dialect / `mini_ir`**、Torch Dialect 等 | 承接框架图、处理拓扑与框架元数据，并向通用 IR 收拢 | `2`–`3`：Protobuf → **mini_ir** → 图 Pass | 多为 **Torch → Linalg** 一跳到 L3，不展开 L1 文档与脚本 |
 | **L2** | **Tensor Operator Layer / High-Level Math Layer**（张量算子层 / 高级数学层） | **StableHLO Dialect**（以及同级高层张量数学 IR） | 硬件无关的数学执行语义：形状推导、布局传播、常量折叠、图级融合等 | `4`（ONNX→StableHLO）/`5`（`shlo_graph` 优化练习） | 不直接产出 StableHLO；概念上可与 `gpu/` 在 L2→L3 处对接 |
 | **L3** | **Structured Op & Memory Layer**（结构化算子与内存层） | **`linalg` on `tensor` → OSB → `linalg` on `memref`** | 结构化算子、tiling/fusion、bufferization、别名与 in-place 决策 | `6`：Linalg tiling/fusion；`7`：**OSB**（产物仍属 L3） | `matmul_l3_linalg_tensor.mlir` / `matmul_l3_linalg_generic.mlir` / `matmul_l3_linalg_memref.mlir` |
@@ -84,9 +108,9 @@
 
 **ONNX 在本仓：**
 
-1. **入口 — `GraphProto`（Protobuf）**：`1_onnx_parse/`，**原生交换图**，尚未进入本文 L1–L4。
-2. **L1 — `mini_ir`**：`2_onnx_to_ir/`、`3_graph_optimize/`，对标 **ONNX MLIR Dialect / Torch Dialect** 的前端图语义（本仓用自研 IR 模拟，未链完整 `onnx-mlir`）。
-3. **L2 — StableHLO**：**P4**/`4`、`5`（**P5**）；降到 **`linalg` on `tensor` 才是 L3**。
+1. **入口 — 原生 `.onnx`（`ModelProto` / `GraphProto`）**：**先生成、再读取**。生成见上表三个 `gen_*` 脚本（输出在 `build/src/mlir/gpu/{models,lowering_models,quant_models}/`）；读取在 `1_onnx_parse/`（P1），**尚未进入**本文 L1–L4。
+2. **L1 — `mini_ir`**：`2_onnx_to_ir/`、`3_graph_optimize/`，对标 **ONNX MLIR Dialect / Torch Dialect** 的前端图语义（本仓用自研 IR 模拟，未链完整 `onnx-mlir`）；消费的是 `models/*.onnx`。
+3. **L2 — StableHLO**：**P4**/`4`、`5`（**P5**）；P4 消费 `lowering_models/*.onnx`（及可选的 `quant_models/`）；降到 **`linalg` on `tensor` 才是 L3**。
 
 ---
 
@@ -96,7 +120,7 @@
 
 | Px | 目录 | 分层 | 典型 target |
 |----|------|------|-------------|
-| **P1** | `1_onnx_parse/` | 入口（原始交换图） | `run_graph` |
+| **P1** | `1_onnx_parse/` | 入口（原始交换图） | `gen_test_models` + `run_graph` |
 | **P2** | `2_onnx_to_ir/` | **L1**（mini_ir） | `run_graph` |
 | **P3** | `3_graph_optimize/` | **L1** | `run_graph` |
 | **P4** | `4_onnx_to_stablehlo/` | 入口/L1→**L2** | `run_lowering` |
@@ -161,6 +185,9 @@
 ## 运行 `gpu/`
 
 ```bash
+# 先导出原生 ONNX fixture（P1–P4 / P12 入口材料）
+cmake --build . --target gen_test_models gen_lowering_models gen_quant_models
+
 cmake --build . --target run_graph      # P1–P3
 cmake --build . --target run_lowering   # P4
 cmake --build . --target run_shlo_opt   # P5 (5_stablehlo_opt)
